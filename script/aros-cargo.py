@@ -8,11 +8,13 @@ compiler, precompiled std and C SDK); AROS_CRATE_STORE the native crate store
 the patches in packaging/aros/aros-patches.toml resolve into. The wrapper
 verifies the SDK's recorded hashes before and after the build, writes the
 AROS-only cargo configuration to target/aros/toolchain.toml, re-pins the
-patched crates in Cargo.lock and runs the SDK's cargo.
+patched crates in the AROS lockfile (packaging/aros/Cargo.lock; the root
+Cargo.lock is left to the other platforms) and runs the SDK's cargo.
 """
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tomllib
@@ -39,6 +41,7 @@ PINS = {
     "tokio": ["1.52.1"],
     "ring": ["0.17.14"],
     "url": ["2.5.7"],
+    "aws-lc-sys": ["0.45.0"],
 }
 
 
@@ -122,15 +125,22 @@ def main():
                   " -fno-pic -mcmodel=large -D_GNU_SOURCE -DHAVE_ENDIAN_H -Dasm=__asm__"
                   " -DSQLITE_OMIT_WAL=1 -DSQLITE_MAX_MMAP_SIZE=0 -DSQLITE_OMIT_LOAD_EXTENSION=1"
                   " -DOPENSSL_NO_SOCK"
-                  " -O2 -Wno-pointer-sign -I" + str(repo / "packaging/aros/include-override"))]
+                  " -O2 -Wno-pointer-sign")]
     generated = repo / "target/aros"
     generated.mkdir(parents=True, exist_ok=True)
     config = generated / "toolchain.toml"
     config.write_text("\n".join(lines) + "\n")
     env.update(tomllib.loads(config.read_text())["env"])
 
-    command = [str(prefix / "bin/cargo"), "--config", str(prefix / "cargo-config.toml"), "--config", str(config)]
-    lock = tomllib.loads((repo / "Cargo.lock").read_text())
+    # The AROS graph has its own lockfile: its patched crates resolve to store
+    # paths and AROS pins, which the root Cargo.lock of the other platforms
+    # must not carry. A missing one starts from the root lockfile.
+    aros_lock = repo / "packaging/aros/Cargo.lock"
+    if not aros_lock.is_file():
+        shutil.copyfile(repo / "Cargo.lock", aros_lock)
+    command = [str(prefix / "bin/cargo"), "--config", str(prefix / "cargo-config.toml"), "--config", str(config),
+               "--config", "resolver.lockfile-path=" + json.dumps(str(aros_lock))]
+    lock = tomllib.loads(aros_lock.read_text())
     for name, versions in PINS.items():
         for version in versions:
             for locked in sorted({p["version"] for p in lock["package"] if p["name"] == name}):

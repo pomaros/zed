@@ -44,6 +44,8 @@ stacker = { path = "stacker-0.1.25" }
 # tokio reports Unix-domain peer credentials as unsupported (the AROS stack
 # has no Unix-domain sockets) instead of inventing root's.
 tokio = { path = "tokio-1.52.1" }
+# aws-lc takes the CPU features from getauxval() as on Linux.
+aws-lc-sys = { path = "aws-lc-sys-0.45.0" }
 # ring builds its ELF AArch64 assembly and draws randomness through getrandom.
 ring = { path = "ring-0.17.14" }
 # url maps DOS paths to file URLs and back, volume included:
