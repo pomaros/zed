@@ -204,7 +204,6 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
 }
 static STARTUP_TIME: OnceLock<Instant> = OnceLock::new();
 
-
 #[cfg(target_os = "aros")]
 unsafe extern "C" {
     fn zed_aros_relaunch_if_small_stack() -> i32;
@@ -215,7 +214,9 @@ fn main() {
     #[cfg(target_os = "aros")]
     unsafe {
         let result = zed_aros_relaunch_if_small_stack();
-        if result >= 0 { std::process::exit(result); }
+        if result >= 0 {
+            std::process::exit(result);
+        }
         zed_aros_prepare_process();
     }
     #[cfg(target_os = "aros")]
@@ -301,9 +302,7 @@ fn main() {
         }
     }
 
-
     let file_errors = init_paths();
-
 
     if !file_errors.is_empty() {
         files_not_created_on_launch(file_errors);
@@ -608,13 +607,13 @@ fn main() {
 
         let node_runtime = NodeRuntime::new(client.http_client(), Some(shell_env_loaded_rx), rx);
 
-#[cfg(not(target_os = "aros"))]
+        #[cfg(not(target_os = "aros"))]
         debug_adapter_extension::init(extension_host_proxy.clone(), cx);
         languages::init(languages.clone(), fs.clone(), node_runtime.clone(), cx);
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.new(|cx| WorkspaceStore::new(client.clone(), cx));
 
-#[cfg(not(target_os = "aros"))]
+        #[cfg(not(target_os = "aros"))]
         language_extension::init(
             language_extension::LspAccess::ViaWorkspaces({
                 let workspace_store = workspace_store.clone();
@@ -722,7 +721,7 @@ fn main() {
 
         theme_settings::init(theme::LoadThemes::All(Box::new(Assets)), cx);
         eager_load_active_theme_and_icon_theme(fs.clone(), cx);
-#[cfg(not(target_os = "aros"))]
+        #[cfg(not(target_os = "aros"))]
         theme_extension::init(
             extension_host_proxy,
             ThemeRegistry::global(cx),
@@ -804,7 +803,7 @@ fn main() {
         project_panel::init(cx);
         outline_panel::init(cx);
         tasks_ui::init(cx);
-#[cfg(not(target_os = "aros"))]
+        #[cfg(not(target_os = "aros"))]
         snippets_ui::init(cx);
         channel::init(&app_state.client.clone(), app_state.user_store.clone(), cx);
         search::init(cx);
@@ -829,10 +828,10 @@ fn main() {
         theme_selector::init(cx);
         settings_profile_selector::init(cx);
         language_tools::init(cx);
-#[cfg(not(target_os = "aros"))]
+        #[cfg(not(target_os = "aros"))]
         call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
-#[cfg(not(target_os = "aros"))]
+        #[cfg(not(target_os = "aros"))]
         collab_ui::init(&app_state, cx);
         git_ui::init(cx);
         feedback::init(cx);
@@ -843,7 +842,7 @@ fn main() {
         #[cfg(not(target_os = "aros"))]
         settings_ui::init(cx);
         keymap_editor::init(cx);
-#[cfg(not(target_os = "aros"))]
+        #[cfg(not(target_os = "aros"))]
         extensions_ui::init(cx);
         edit_prediction::init(cx);
         inspector_ui::init(app_state.clone(), cx);
@@ -1416,15 +1415,18 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
 
                     let mut promises = Vec::new();
                     for (channel_id, heading) in request.open_channel_notes {
-                        promises.push(cx.update_window(workspace_window.into(), |_, window, cx| {
-                            ChannelView::open(
-                                client::ChannelId(channel_id),
-                                heading,
-                                workspace.clone(),
-                                window,
-                                cx,
-                            )
-                        })?)
+                        promises.push(cx.update_window(
+                            workspace_window.into(),
+                            |_, window, cx| {
+                                ChannelView::open(
+                                    client::ChannelId(channel_id),
+                                    heading,
+                                    workspace.clone(),
+                                    window,
+                                    cx,
+                                )
+                            },
+                        )?)
                     }
                     for result in future::join_all(promises).await {
                         result.notify_workspace_async_err(weak_workspace.clone(), cx);
@@ -1893,7 +1895,9 @@ fn native_path_url(path: &Path) -> Option<String> {
 fn parse_url_arg(arg: &str, cx: &App) -> String {
     #[cfg(target_os = "aros")]
     {
-        if arg.get(..7).is_some_and(|scheme| scheme.eq_ignore_ascii_case("file://"))
+        if arg
+            .get(..7)
+            .is_some_and(|scheme| scheme.eq_ignore_ascii_case("file://"))
             || arg.starts_with("zed://")
             || arg.starts_with("zed-cli://")
             || arg.starts_with("ssh://")

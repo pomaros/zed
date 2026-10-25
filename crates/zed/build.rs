@@ -4,8 +4,11 @@ use std::process::Command;
 fn main() {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("aros") {
         println!("cargo:rerun-if-changed=c/native_startup.c");
-        cc::Build::new().file("c/native_startup.c").pic(false)
-            .flag("-Wno-pointer-sign").compile("zed_native_startup");
+        cc::Build::new()
+            .file("c/native_startup.c")
+            .pic(false)
+            .flag("-Wno-pointer-sign")
+            .compile("zed_native_startup");
     }
     #[cfg(target_os = "linux")]
     {

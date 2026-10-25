@@ -174,13 +174,20 @@ impl OpenRequest {
                 });
             } else if {
                 #[cfg(target_os = "aros")]
-                { is_native_file_uri(&url) }
+                {
+                    is_native_file_uri(&url)
+                }
                 #[cfg(not(target_os = "aros"))]
-                { url.starts_with("file://") }
+                {
+                    url.starts_with("file://")
+                }
             } {
                 #[cfg(target_os = "aros")]
                 {
-                    anyhow::ensure!(this.remote_connection.is_none(), "cannot mix native file URIs and remote paths");
+                    anyhow::ensure!(
+                        this.remote_connection.is_none(),
+                        "cannot mix native file URIs and remote paths"
+                    );
                     native_file_uri_path(&url)?;
                     // Keep the encoded URI until derive_paths_with_position:
                     // a raw Latin-1 DOS filename cannot pass through String.
@@ -1136,7 +1143,8 @@ async fn open_local_workspace(
 
 #[cfg(target_os = "aros")]
 fn is_native_file_uri(text: &str) -> bool {
-    text.get(..7).is_some_and(|scheme| scheme.eq_ignore_ascii_case("file://"))
+    text.get(..7)
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("file://"))
 }
 
 #[cfg(not(target_os = "aros"))]
@@ -1154,7 +1162,8 @@ fn is_skill_share_link(_url: &str) -> bool {
 #[cfg(target_os = "aros")]
 fn native_file_uri_path(text: &str) -> Result<PathBuf> {
     let uri = url::Url::parse(text).context("invalid native file URI")?;
-    uri.to_file_path().map_err(|()| anyhow!("unsupported native file URI"))
+    uri.to_file_path()
+        .map_err(|()| anyhow!("unsupported native file URI"))
 }
 
 pub async fn derive_paths_with_position(
@@ -3147,18 +3156,37 @@ mod native_file_uri_tests {
             ("file:///RAM%3Amain.rs", b"RAM:main.rs".as_slice()),
             ("file://localhost/RAM%3Amain.rs", b"RAM:main.rs".as_slice()),
             ("FILE://LOCALHOST/RAM%3Amain.rs", b"RAM:main.rs".as_slice()),
-            ("file:///RAM%20Disk%3AZed%20QA/main.rs", b"RAM Disk:Zed QA/main.rs".as_slice()),
+            (
+                "file:///RAM%20Disk%3AZed%20QA/main.rs",
+                b"RAM Disk:Zed QA/main.rs".as_slice(),
+            ),
             ("file:///RAM%3Adir//peer", b"RAM:dir//peer".as_slice()),
             ("file:///RAM%3A.", b"RAM:.".as_slice()),
             ("file:///RAM%3Acaf%E9.rs", b"RAM:caf\xe9.rs".as_slice()),
         ] {
-            assert_eq!(native_file_uri_path(uri).expect("native file URI").as_os_str().as_bytes(), bytes);
+            assert_eq!(
+                native_file_uri_path(uri)
+                    .expect("native file URI")
+                    .as_os_str()
+                    .as_bytes(),
+                bytes
+            );
         }
     }
 
     #[test]
     fn native_consumer_refuses_lossy_or_foreign_uris() {
-        for uri in ["file://remote/RAM%3Amain.rs", "file:///relative.rs", "file:///RAM%3Adir/../peer", "file:///RAM%3Adir/%2e/peer", "file:///RAM%3Aa%2Fb", "file:///RAM%3Aa%00b", "file:///RAM%3Aa%GG", "file:///RAM%3Aa?query", "file:///RAM%3Aa#fragment"] {
+        for uri in [
+            "file://remote/RAM%3Amain.rs",
+            "file:///relative.rs",
+            "file:///RAM%3Adir/../peer",
+            "file:///RAM%3Adir/%2e/peer",
+            "file:///RAM%3Aa%2Fb",
+            "file:///RAM%3Aa%00b",
+            "file:///RAM%3Aa%GG",
+            "file:///RAM%3Aa?query",
+            "file:///RAM%3Aa#fragment",
+        ] {
             assert!(native_file_uri_path(uri).is_err(), "{uri}");
         }
     }

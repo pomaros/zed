@@ -277,7 +277,10 @@ pub fn increase_open_file_limit() -> Result<()> {
 pub fn increase_open_file_limit() -> Result<()> {
     use anyhow::Context as _;
 
-    let mut limit = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+    let mut limit = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
     if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) } != 0 {
         return Err(std::io::Error::last_os_error()).context("getrlimit(RLIMIT_NOFILE)");
     }

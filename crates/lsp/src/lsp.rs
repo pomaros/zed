@@ -586,7 +586,9 @@ impl LanguageServer {
     /// as a local server would over its stdio, so all message handling is
     /// shared with `new` via `new_internal`. Used where local process spawning
     /// is unavailable and another machine runs the real server and relays its
-    /// stdio to this socket.
+    /// stdio to this socket. The server sees this side's file URIs (on AROS
+    /// `file:///RAM%3Adir/f.rs`), so it needs the same files under the same
+    /// names, through a shared volume or a relay that translates the paths.
     pub async fn new_tcp(
         addr: std::net::SocketAddr,
         stderr_capture: Arc<Mutex<Option<String>>>,

@@ -36,17 +36,7 @@ pub fn home_dir() -> &'static PathBuf {
                 PathBuf::from("/home/zed")
             }
         } else {
-            // AROS has no `dirs` backend; resolve $HOME directly.
-            #[cfg(target_os = "aros")]
-            {
-                std::env::var_os("HOME")
-                    .map(PathBuf::from)
-                    .expect("failed to determine home directory")
-            }
-            #[cfg(not(target_os = "aros"))]
-            {
-                dirs::home_dir().expect("failed to determine home directory")
-            }
+            dirs::home_dir().expect("failed to determine home directory")
         }
     })
 }
@@ -1430,7 +1420,6 @@ pub trait UrlExt {
 impl UrlExt for url::Url {
     // Copied from `url::Url::to_file_path`, but the `cfg` handling is replaced with runtime branching on `PathStyle`
     fn to_file_path_ext(&self, source_path_style: PathStyle) -> Result<PathBuf, ()> {
-        let computed = (|| -> Result<PathBuf, ()> {
         if let Some(segments) = self.path_segments() {
             let host = match self.host() {
                 None | Some(url::Host::Domain("localhost")) => None,
@@ -1565,9 +1554,6 @@ impl UrlExt for url::Url {
             Ok(path)
         }
         Err(())
-        })();
-        let path = computed?;
-        Ok(path)
     }
 }
 

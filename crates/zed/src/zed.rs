@@ -2439,7 +2439,8 @@ pub fn load_default_keymap(cx: &mut App) {
             ));
         }
 
-        if VimModeSetting::get_global(cx).0 || vim_mode_setting::HelixModeSetting::get_global(cx).0 {
+        if VimModeSetting::get_global(cx).0 || vim_mode_setting::HelixModeSetting::get_global(cx).0
+        {
             cx.bind_keys(filter_disabled_ai_bindings(
                 KeymapFile::load_asset(VIM_KEYMAP_PATH, Some(KeybindSource::Vim), cx).unwrap(),
                 cx,
