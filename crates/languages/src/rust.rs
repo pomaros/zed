@@ -58,6 +58,14 @@ impl RustLspAdapter {
     const ARCH_SERVER_NAME: &str = "unknown-linux";
 }
 
+// AROS reaches language servers only through an explicit remote endpoint, so
+// no release is downloaded; the constants still have to exist to compile.
+#[cfg(target_os = "aros")]
+impl RustLspAdapter {
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::Gz;
+    const ARCH_SERVER_NAME: &str = "unknown-aros";
+}
+
 #[cfg(target_os = "freebsd")]
 impl RustLspAdapter {
     const GITHUB_ASSET_KIND: AssetKind = AssetKind::Gz;

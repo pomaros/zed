@@ -34,6 +34,10 @@ serde.workspace = true
 serde_json.workspace = true
 util.workspace = true
 
+[target.'cfg(target_os = "aros")'.dependencies]
+# The optional remote language-server endpoint (ZED_AROS_LSP_ADDR) is a TCP stream.
+smol.workspace = true
+
 [dev-dependencies]
 async-pipe.workspace = true
 gpui_util.workspace = true

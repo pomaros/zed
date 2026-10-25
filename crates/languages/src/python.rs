@@ -333,6 +333,14 @@ impl TyLspAdapter {
     const ARCH_SERVER_NAME: &str = "unknown-linux-gnu";
 }
 
+// AROS reaches language servers only through an explicit remote endpoint, so
+// no release is downloaded; the constants still have to exist to compile.
+#[cfg(target_os = "aros")]
+impl TyLspAdapter {
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::TarGz;
+    const ARCH_SERVER_NAME: &str = "unknown-aros";
+}
+
 #[cfg(target_os = "freebsd")]
 impl TyLspAdapter {
     const GITHUB_ASSET_KIND: AssetKind = AssetKind::TarGz;
@@ -2455,6 +2463,14 @@ impl RuffLspAdapter {
     const ARCH_SERVER_NAME: &str = "unknown-linux-gnu";
 }
 
+// AROS reaches language servers only through an explicit remote endpoint, so
+// no release is downloaded; the constants still have to exist to compile.
+#[cfg(target_os = "aros")]
+impl RuffLspAdapter {
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::TarGz;
+    const ARCH_SERVER_NAME: &str = "unknown-aros";
+}
+
 #[cfg(target_os = "freebsd")]
 impl RuffLspAdapter {
     const GITHUB_ASSET_KIND: AssetKind = AssetKind::TarGz;
@@ -2744,6 +2760,14 @@ impl PyreflyLspAdapter {
 impl PyreflyLspAdapter {
     const GITHUB_ASSET_KIND: AssetKind = AssetKind::Zip;
     const ARCH_SERVER_NAME: &str = "windows";
+}
+
+// AROS reaches language servers only through an explicit remote endpoint, so
+// no release is downloaded; the constants still have to exist to compile.
+#[cfg(target_os = "aros")]
+impl PyreflyLspAdapter {
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::TarGz;
+    const ARCH_SERVER_NAME: &str = "aros";
 }
 
 impl PyreflyLspAdapter {

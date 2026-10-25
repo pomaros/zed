@@ -3,7 +3,7 @@ use crate::{
     CachedLspAdapter, File, Language, LanguageConfig, LanguageId, LanguageMatcher,
     LanguageServerName, LspAdapter, ManifestName, PLAIN_TEXT, ToolchainLister,
     available_languages::AvailableLanguages, language_settings::all_language_settings,
-    task_context::ContextProvider, with_parser,
+    task_context::ContextProvider,
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, HashMap, HashSet, hash_map};
@@ -961,12 +961,25 @@ impl LanguageRegistry {
                                     .file_stem()
                                     .and_then(OsStr::to_str)
                                     .context("invalid grammar filename")?;
-                                anyhow::Ok(with_parser(|parser| {
-                                    let mut store = parser.take_wasm_store().unwrap();
-                                    let grammar = store.load_language(grammar_name, &wasm_bytes);
-                                    parser.set_wasm_store(store).unwrap();
-                                    grammar
-                                })?)
+                                #[cfg(not(target_os = "aros"))]
+                                {
+                                    anyhow::Ok(crate::with_parser(|parser| {
+                                        let mut store = parser.take_wasm_store().unwrap();
+                                        let grammar =
+                                            store.load_language(grammar_name, &wasm_bytes);
+                                        parser.set_wasm_store(store).unwrap();
+                                        grammar
+                                    })?)
+                                }
+                                // AROS has no wasm engine (wasm is stubbed); only
+                                // built-in grammars are available.
+                                #[cfg(target_os = "aros")]
+                                {
+                                    let _ = (grammar_name, &wasm_bytes);
+                                    anyhow::Result::<tree_sitter::Language>::Err(anyhow!(
+                                        "wasm grammars are not supported on AROS"
+                                    ))
+                                }
                             })
                             .map_err(Arc::new);
 

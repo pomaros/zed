@@ -100,7 +100,9 @@ pub use toolchain::{
     LanguageToolchainStore, LocalLanguageToolchainStore, Toolchain, ToolchainList, ToolchainLister,
     ToolchainMetadata, ToolchainScope,
 };
-use tree_sitter::{self, QueryCursor, WasmStore, wasmtime};
+use tree_sitter::{self, QueryCursor};
+#[cfg(not(target_os = "aros"))]
+use tree_sitter::{WasmStore, wasmtime};
 use util::paths::PathStyle;
 use util::rel_path::RelPath;
 
@@ -141,7 +143,9 @@ where
     F: FnOnce(&mut Parser) -> R,
 {
     let mut parser = PARSERS.lock().pop().unwrap_or_else(|| {
+        #[cfg_attr(target_os = "aros", allow(unused_mut))]
         let mut parser = Parser::new();
+        #[cfg(not(target_os = "aros"))]
         parser
             .set_wasm_store(WasmStore::new(&WASM_ENGINE).unwrap())
             .unwrap();
@@ -167,6 +171,7 @@ where
     func(cursor.deref_mut())
 }
 
+#[cfg(not(target_os = "aros"))]
 static WASM_ENGINE: LazyLock<wasmtime::Engine> = LazyLock::new(|| {
     wasmtime::Engine::new(&wasmtime::Config::new()).expect("Failed to create Wasmtime engine")
 });

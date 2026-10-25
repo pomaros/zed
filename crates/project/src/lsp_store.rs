@@ -180,6 +180,7 @@ const WORKSPACE_DIAGNOSTICS_REPULL_DELAY: Duration = Duration::from_secs(2);
 const CROSS_BUFFER_DIAGNOSTICS_PULL_DELAY: Duration = Duration::from_millis(100);
 const DOCUMENT_DIAGNOSTICS_RETRIGGER_LIMIT: usize = 3;
 const DOCUMENT_DIAGNOSTICS_RETRIGGER_DELAY: Duration = Duration::from_millis(100);
+#[cfg(not(target_os = "aros"))]
 const SERVER_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(10);
 static NEXT_PROMPT_REQUEST_ID: AtomicUsize = AtomicUsize::new(0);
 
@@ -424,6 +425,20 @@ enum LanguageServerStartMode {
     Explicit,
 }
 
+/// Whether `ZED_AROS_LSP_ADDR` names a remote language-server endpoint. Native
+/// AROS cannot launch server binaries; the absence is logged once.
+#[cfg(target_os = "aros")]
+fn aros_remote_lsp_configured() -> bool {
+    static CONFIGURED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *CONFIGURED.get_or_init(|| {
+        let configured = std::env::var_os("ZED_AROS_LSP_ADDR").is_some();
+        if !configured {
+            log::info!("language servers disabled: native process launching is unavailable on AROS and ZED_AROS_LSP_ADDR is not set");
+        }
+        configured
+    })
+}
+
 impl LocalLspStore {
     /// Returns the running language server for the given ID. Note if the language server is starting, it will not be returned.
     pub fn running_language_server_for_id(
@@ -576,6 +591,7 @@ impl LocalLspStore {
             });
         let update_binary_status = wait_until_worktree_trust.is_none();
 
+        #[cfg(not(target_os = "aros"))]
         let binary = self.get_language_server_binary(
             worktree_abs_path.clone(),
             adapter.clone(),
@@ -596,6 +612,20 @@ impl LocalLspStore {
             let lsp_store = self.weak.clone();
             let pending_workspace_folders = pending_workspace_folders.clone();
             async move |cx| {
+                // AROS editing does not require a development host. Remote
+                // LSP is an explicit endpoint; absent one, report the missing
+                // capability rather than assume localhost or download Linux.
+                #[cfg(target_os = "aros")]
+                let native_lsp_addr: std::net::SocketAddr = std::env::var("ZED_AROS_LSP_ADDR")
+                    .context("native language-server process launching is unavailable; configure ZED_AROS_LSP_ADDR for optional remote LSP")?
+                    .parse().context("invalid ZED_AROS_LSP_ADDR")?;
+                #[cfg(target_os = "aros")]
+                let binary = ::lsp::LanguageServerBinary {
+                    path: std::path::PathBuf::from("remote-lsp"),
+                    arguments: Vec::new(),
+                    env: None,
+                };
+                #[cfg(not(target_os = "aros"))]
                 let binary = binary.await?;
                 #[cfg(any(test, feature = "test-support"))]
                 if let Some(server) = lsp_store
@@ -614,6 +644,22 @@ impl LocalLspStore {
                 }
 
                 let code_action_kinds = adapter.code_action_kinds();
+                #[cfg(target_os = "aros")]
+                {
+                    return lsp::LanguageServer::new_tcp(
+                        native_lsp_addr,
+                        stderr_capture,
+                        server_id,
+                        server_name,
+                        binary,
+                        &worktree_abs_path,
+                        code_action_kinds,
+                        Some(pending_workspace_folders),
+                        cx,
+                    )
+                    .await;
+                }
+                #[cfg(not(target_os = "aros"))]
                 lsp::LanguageServer::new(
                     stderr_capture,
                     server_id,
@@ -787,6 +833,7 @@ impl LocalLspStore {
         server_id
     }
 
+    #[cfg(not(target_os = "aros"))]
     fn get_language_server_binary(
         &self,
         worktree_abs_path: Arc<Path>,
@@ -3269,6 +3316,13 @@ impl LocalLspStore {
         let servers_and_adapters = servers
             .into_iter()
             .filter_map(|server_node| {
+                // AROS has no process launching yet: without an explicit
+                // remote endpoint there is no server to start, so do not
+                // try and report a failure on every buffer open.
+                #[cfg(target_os = "aros")]
+                if !aros_remote_lsp_configured() {
+                    return None;
+                }
                 if !only_register_servers.is_empty() {
                     if let Some(server_id) = server_node.server_id()
                         && !only_register_servers.contains(&LanguageServerSelector::Id(server_id))
@@ -6444,6 +6498,11 @@ impl LspStore {
     }
 
     fn refresh_server_tree(&mut self, cx: &mut Context<Self>) {
+        // See aros_remote_lsp_configured: nothing to start without an endpoint.
+        #[cfg(target_os = "aros")]
+        if !aros_remote_lsp_configured() {
+            return;
+        }
         let buffer_store = self.buffer_store.clone();
         let Some(local) = self.as_local_mut() else {
             return;
@@ -10545,12 +10604,18 @@ impl LspStore {
         language_server_id: LanguageServerId,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Buffer>>> {
+        #[cfg(not(target_os = "aros"))]
         let path_style = self.worktree_store.read(cx).path_style();
         cx.spawn(async move |lsp_store, cx| {
             // Escape percent-encoded string.
             let current_scheme = abs_path.scheme().to_owned();
             // Uri is immutable, so we can't modify the scheme
 
+            #[cfg(target_os = "aros")]
+            let abs_path = abs_path
+                .to_file_path()
+                .map_err(|()| anyhow!("can't convert URI to native AROS path"))?;
+            #[cfg(not(target_os = "aros"))]
             let abs_path = abs_path
                 .to_file_path_ext(path_style)
                 .map_err(|()| anyhow!("can't convert URI to path"))?;
