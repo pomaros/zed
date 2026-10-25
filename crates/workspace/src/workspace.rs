@@ -5211,6 +5211,15 @@ impl Workspace {
                 .detach();
         };
 
+        #[cfg(target_os = "aros")]
+        if self.project().read(cx).is_local()
+            && !url_or_path.contains("://")
+            && util::paths::is_local_absolute(Path::new(url_or_path))
+        {
+            open_abs_path(self, PathBuf::from(url_or_path), cx);
+            return;
+        }
+
         if let Ok(url) = Url::parse(url_or_path) {
             match url.scheme() {
                 "http" | "https" => cx.open_url(url_or_path),

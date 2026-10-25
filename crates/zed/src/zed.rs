@@ -15,7 +15,9 @@ pub mod visual_tests;
 #[cfg(target_os = "windows")]
 pub(crate) mod windows_only_instance;
 
+#[cfg(not(target_os = "aros"))]
 use agent_settings::{UserAgentsMdState, init_user_agents_md};
+#[cfg(not(target_os = "aros"))]
 use agent_ui::AgentDiffToolbar;
 use anyhow::Context as _;
 pub use app_menus::*;
@@ -26,6 +28,7 @@ use client::zed_urls;
 use collections::VecDeque;
 use debugger_ui::debugger_panel::DebugPanel;
 use editor::{Editor, MultiBuffer};
+#[cfg(not(target_os = "aros"))]
 use extension_host::ExtensionStore;
 use feature_flags::{FeatureFlagAppExt as _, PanicFeatureFlag};
 use fs::Fs;
@@ -77,6 +80,7 @@ use settings::{
     SettingsFile, SettingsStore, VIM_KEYMAP_PATH, initial_local_debug_tasks_content,
     initial_project_settings_content, initial_tasks_content, update_settings_file,
 };
+#[cfg(not(target_os = "aros"))]
 use sidebar::Sidebar;
 #[cfg(debug_assertions)]
 use workspace::workspace_error::{ErrorAction, ErrorSeverity, WorkspaceError};
@@ -516,6 +520,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
                 let active_workspace = this.workspace().clone();
                 let source_workspace = source_workspace.clone();
                 active_workspace.update(cx, |workspace, cx| {
+                    #[cfg(not(target_os = "aros"))]
                     if let Some(ref source) = source_workspace {
                         if let Some(panel) = workspace.panel::<agent_ui::AgentPanel>(cx) {
                             panel.update(cx, |panel, cx| {
@@ -538,11 +543,14 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
         cx.defer(move |cx| {
             window_handle
                 .update(cx, |_, window, cx| {
-                    let sidebar =
-                        cx.new(|cx| Sidebar::new(multi_workspace_handle.clone(), window, cx));
-                    multi_workspace_handle.update(cx, |multi_workspace, cx| {
-                        multi_workspace.register_sidebar(sidebar, cx);
-                    });
+                    #[cfg(not(target_os = "aros"))]
+                    {
+                        let sidebar =
+                            cx.new(|cx| Sidebar::new(multi_workspace_handle.clone(), window, cx));
+                        multi_workspace_handle.update(cx, |multi_workspace, cx| {
+                            multi_workspace.register_sidebar(sidebar, cx);
+                        });
+                    }
                 })
                 .ok();
         });
@@ -663,6 +671,12 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
     .detach();
 }
 
+/// AROS has no native file watcher (the file system watcher polls there), so
+/// there is no start-up failure to warn about.
+#[cfg(target_os = "aros")]
+#[allow(unused)]
+fn initialize_file_watcher(_fs: &dyn Fs, _window: &mut Window, _cx: &mut Context<Workspace>) {}
+
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 #[allow(unused)]
 fn initialize_file_watcher(fs: &dyn Fs, window: &mut Window, cx: &mut Context<Workspace>) {
@@ -781,6 +795,7 @@ fn initialize_panels(window: &mut Window, cx: &mut Context<Workspace>) -> Task<a
         let outline_panel = OutlinePanel::load(workspace_handle.clone(), cx.clone());
         let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
         let git_panel = GitPanel::load(workspace_handle.clone(), cx.clone());
+        #[cfg(not(target_os = "aros"))]
         let channels_panel =
             collab_ui::collab_panel::CollabPanel::load(workspace_handle.clone(), cx.clone());
         let debug_panel = DebugPanel::load(workspace_handle.clone(), cx);
@@ -800,12 +815,20 @@ fn initialize_panels(window: &mut Window, cx: &mut Context<Workspace>) -> Task<a
             }
         }
 
+        // The collab panel does not exist on AROS; keep join!'s arity stable by
+        // substituting an already-finished future there.
+        #[cfg(not(target_os = "aros"))]
+        let channels_panel_ready =
+            add_panel_when_ready(channels_panel, workspace_handle.clone(), cx.clone());
+        #[cfg(target_os = "aros")]
+        let channels_panel_ready = std::future::ready(());
+
         futures::join!(
             add_panel_when_ready(project_panel, workspace_handle.clone(), cx.clone()),
             add_panel_when_ready(outline_panel, workspace_handle.clone(), cx.clone()),
             add_panel_when_ready(terminal_panel, workspace_handle.clone(), cx.clone()),
             add_panel_when_ready(git_panel, workspace_handle.clone(), cx.clone()),
-            add_panel_when_ready(channels_panel, workspace_handle.clone(), cx.clone()),
+            channels_panel_ready,
             add_panel_when_ready(debug_panel, workspace_handle.clone(), cx.clone()),
             initialize_agent_panel(workspace_handle.clone(), cx.clone()).map(|r| r.log_err()),
         );
@@ -854,6 +877,17 @@ fn setup_or_teardown_ai_panel<P: Panel>(
     }
 }
 
+#[cfg(target_os = "aros")]
+fn ensure_agent_panel_for_workspace(
+    _workspace: &mut Workspace,
+    _source_workspace: Option<WeakEntity<Workspace>>,
+    _window: &mut Window,
+    _cx: &mut Context<Workspace>,
+) -> Task<anyhow::Result<()>> {
+    Task::ready(Ok(()))
+}
+
+#[cfg(not(target_os = "aros"))]
 fn ensure_agent_panel_for_workspace(
     workspace: &mut Workspace,
     source_workspace: Option<WeakEntity<Workspace>>,
@@ -878,6 +912,15 @@ fn ensure_agent_panel_for_workspace(
     })
 }
 
+#[cfg(target_os = "aros")]
+async fn initialize_agent_panel(
+    _workspace_handle: WeakEntity<Workspace>,
+    _cx: AsyncWindowContext,
+) -> anyhow::Result<()> {
+    Ok(())
+}
+
+#[cfg(not(target_os = "aros"))]
 async fn initialize_agent_panel(
     workspace_handle: WeakEntity<Workspace>,
     mut cx: AsyncWindowContext,
@@ -901,6 +944,7 @@ async fn initialize_agent_panel(
         //
         // Once we ship `assistant2` we can push this back down into `agent::agent_panel::init`.
         if !cfg!(test) {
+            #[cfg(not(target_os = "aros"))]
             workspace
                 .register_action(agent_ui::AgentPanel::toggle_focus)
                 .register_action(agent_ui::AgentPanel::focus)
@@ -1318,14 +1362,6 @@ fn register_actions(
         )
         .register_action(
             |workspace: &mut Workspace,
-             _: &collab_ui::collab_panel::ToggleFocus,
-             window: &mut Window,
-             cx: &mut Context<Workspace>| {
-                workspace.toggle_panel_focus::<collab_ui::collab_panel::CollabPanel>(window, cx);
-            },
-        )
-        .register_action(
-            |workspace: &mut Workspace,
              _: &terminal_panel::ToggleFocus,
              window: &mut Window,
              cx: &mut Context<Workspace>| {
@@ -1381,6 +1417,18 @@ fn register_actions(
     #[cfg(not(target_os = "windows"))]
     workspace.register_action(install_cli);
 
+    // Registered separately (rather than in the chain above) so it can be left
+    // out on AROS, which does not build the collaboration stack.
+    #[cfg(not(target_os = "aros"))]
+    workspace.register_action(
+        |workspace: &mut Workspace,
+         _: &collab_ui::collab_panel::ToggleFocus,
+         window: &mut Window,
+         cx: &mut Context<Workspace>| {
+            workspace.toggle_panel_focus::<collab_ui::collab_panel::CollabPanel>(window, cx);
+        },
+    );
+
     if workspace.project().read(cx).is_via_remote_server() {
         workspace.register_action({
             move |workspace, _: &OpenServerSettings, window, cx| {
@@ -1413,6 +1461,7 @@ fn register_actions(
         });
     }
 
+    #[cfg(not(target_os = "aros"))]
     workspace.register_action(sidebar::dump_workspace_info);
 
     #[cfg(debug_assertions)]
@@ -1491,8 +1540,11 @@ fn initialize_pane(
             toolbar.add_item(lsp_log_item, window, cx);
             let dap_log_item = cx.new(|_| debugger_tools::DapLogToolbarItemView::new());
             toolbar.add_item(dap_log_item, window, cx);
-            let acp_tools_item = cx.new(|_| acp_tools::AcpToolsToolbarItemView::new());
-            toolbar.add_item(acp_tools_item, window, cx);
+            #[cfg(not(target_os = "aros"))]
+            {
+                let acp_tools_item = cx.new(|_| acp_tools::AcpToolsToolbarItemView::new());
+                toolbar.add_item(acp_tools_item, window, cx);
+            }
             let telemetry_log_item =
                 cx.new(|cx| telemetry_log::TelemetryLogToolbarItemView::new(window, cx));
             toolbar.add_item(telemetry_log_item, window, cx);
@@ -1516,8 +1568,11 @@ fn initialize_pane(
             toolbar.add_item(solo_diff_git_toolbar, window, cx);
             let commit_view_toolbar = cx.new(|_| CommitViewToolbar::new());
             toolbar.add_item(commit_view_toolbar, window, cx);
-            let agent_diff_toolbar = cx.new(AgentDiffToolbar::new);
-            toolbar.add_item(agent_diff_toolbar, window, cx);
+            #[cfg(not(target_os = "aros"))]
+            {
+                let agent_diff_toolbar = cx.new(AgentDiffToolbar::new);
+                toolbar.add_item(agent_diff_toolbar, window, cx);
+            }
             let basedpyright_banner = cx.new(|cx| BasedPyrightBanner::new(workspace, cx));
             toolbar.add_item(basedpyright_banner, window, cx);
             let image_view_toolbar = cx.new(|_| image_viewer::ImageViewToolbarControls::new());
@@ -2087,6 +2142,12 @@ fn init_reduce_motion(cx: &mut App) {
 ///
 /// The file itself is loaded into [`agent_settings::UserAgentsMd`] for inclusion
 /// in prompts.
+/// The user AGENTS.md only feeds agent prompts, and the agent stack is not
+/// built on AROS.
+#[cfg(target_os = "aros")]
+pub fn watch_user_agents_md(_fs: Arc<dyn fs::Fs>, _cx: &mut App) {}
+
+#[cfg(not(target_os = "aros"))]
 pub fn watch_user_agents_md(fs: Arc<dyn fs::Fs>, cx: &mut App) {
     struct UserAgentsMdParseError;
     let notification_id = NotificationId::unique::<UserAgentsMdParseError>();
@@ -2351,33 +2412,49 @@ pub fn load_default_keymap(cx: &mut App) {
         return;
     }
 
-    cx.bind_keys(filter_disabled_ai_bindings(
-        KeymapFile::load_asset(DEFAULT_KEYMAP_PATH, Some(KeybindSource::Default), cx).unwrap(),
-        cx,
-    ));
-
-    if let Some(asset_path) = base_keymap.asset_path() {
-        cx.bind_keys(filter_disabled_ai_bindings(
-            KeymapFile::load_asset(asset_path, Some(KeybindSource::Base), cx).unwrap(),
-            cx,
-        ));
+    // On AROS several subsystems are not built (agent, extensions, collab, the
+    // settings editor), so the bundled keymaps reference actions that do not
+    // exist there. Bind what resolves instead of treating the rest as fatal.
+    // aros.json comes last: it adds bindings on keys that stay put whatever
+    // the keyboard layout, for defaults that sit on keys which do not.
+    #[cfg(target_os = "aros")]
+    for path in [DEFAULT_KEYMAP_PATH, VIM_KEYMAP_PATH, "keymaps/aros.json"] {
+        match KeymapFile::load_asset_allow_partial_failure(path, cx) {
+            Ok(bindings) => cx.bind_keys(filter_disabled_ai_bindings(bindings, cx)),
+            Err(error) => log::error!("Failed to load keymap {path}: {error}"),
+        }
     }
 
-    if VimModeSetting::get_global(cx).0 || vim_mode_setting::HelixModeSetting::get_global(cx).0 {
+    #[cfg(not(target_os = "aros"))]
+    {
         cx.bind_keys(filter_disabled_ai_bindings(
-            KeymapFile::load_asset(VIM_KEYMAP_PATH, Some(KeybindSource::Vim), cx).unwrap(),
+            KeymapFile::load_asset(DEFAULT_KEYMAP_PATH, Some(KeybindSource::Default), cx).unwrap(),
             cx,
         ));
-    }
 
-    cx.bind_keys(
-        KeymapFile::load_asset(
-            SPECIFIC_OVERRIDES_KEYMAP_PATH,
-            Some(KeybindSource::Default),
-            cx,
-        )
-        .unwrap(),
-    );
+        if let Some(asset_path) = base_keymap.asset_path() {
+            cx.bind_keys(filter_disabled_ai_bindings(
+                KeymapFile::load_asset(asset_path, Some(KeybindSource::Base), cx).unwrap(),
+                cx,
+            ));
+        }
+
+        if VimModeSetting::get_global(cx).0 || vim_mode_setting::HelixModeSetting::get_global(cx).0 {
+            cx.bind_keys(filter_disabled_ai_bindings(
+                KeymapFile::load_asset(VIM_KEYMAP_PATH, Some(KeybindSource::Vim), cx).unwrap(),
+                cx,
+            ));
+        }
+
+        cx.bind_keys(
+            KeymapFile::load_asset(
+                SPECIFIC_OVERRIDES_KEYMAP_PATH,
+                Some(KeybindSource::Default),
+                cx,
+            )
+            .unwrap(),
+        );
+    }
 }
 
 /// Namespaces of actions that are part of an AI feature. When the user opts out
@@ -2775,6 +2852,12 @@ fn open_settings_file(
 ///
 /// This fast path exists to load these themes as soon as possible so the user
 /// doesn't see the default themes while waiting on extensions to load.
+/// On AROS there are no extensions, so any theme that is not already in the
+/// registry cannot be loaded: nothing to do.
+#[cfg(target_os = "aros")]
+pub(crate) fn eager_load_active_theme_and_icon_theme(_fs: Arc<dyn Fs>, _cx: &mut App) {}
+
+#[cfg(not(target_os = "aros"))]
 pub(crate) fn eager_load_active_theme_and_icon_theme(fs: Arc<dyn Fs>, cx: &mut App) {
     let extension_store = ExtensionStore::global(cx);
     let theme_registry = ThemeRegistry::global(cx);

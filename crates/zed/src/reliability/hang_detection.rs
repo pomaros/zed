@@ -10,6 +10,7 @@ use ui::App;
 use crate::STARTUP_TIME;
 
 mod logging;
+mod owned_monitor;
 mod task_traces;
 
 gpui::actions!(
@@ -83,25 +84,31 @@ fn start_hang_detection(report_longer_then: Duration, client: Arc<Client>, cx: &
 
     let mut log = logging::Reporter::new(monitor_interval, report_longer_then, foreground_thread);
     // An OS thread keeps the legacy hang logs and task traces working while
-    // the foreground or background executors are hung.
-    thread::Builder::new()
-        .name("HangLogging".to_string())
-        .spawn(move || {
-            // allow "bad" tasks during startup. Not because we should but since here
-            // they are not observed by the user and to lower on clutter from the reporter
-            thread::sleep(Duration::from_millis(200));
-            loop {
-                thread::sleep(monitor_interval);
-                let task_stats = profiler::take_all_stats(TasksIncluded::CompletedAndRunning);
-                let action_stats = profiler::take_action_stats();
+    // the foreground or background executors are hung. It is owned by the
+    // quit subscription and joined there: a monitor must not outlive the code
+    // it runs (AROS unloads a program's segments as soon as it returns).
+    // Startup is allowed "bad" tasks: the user does not observe them yet.
+    let mut monitor = owned_monitor::OwnedMonitor::spawn(
+        Duration::from_millis(200),
+        monitor_interval,
+        move || {
+            let task_stats = profiler::take_all_stats(TasksIncluded::CompletedAndRunning);
+            let action_stats = profiler::take_action_stats();
 
-                let should_write_trace = log.check_and_report(&task_stats, &action_stats);
-                if should_write_trace {
-                    if let Some(path) = task_traces::save_any(foreground_thread) {
-                        log::info!("Task trace has been saved to: {}", path.display());
-                    }
+            let should_write_trace = log.check_and_report(&task_stats, &action_stats);
+            if should_write_trace {
+                if let Some(path) = task_traces::save_any(foreground_thread) {
+                    log::info!("Task trace has been saved to: {}", path.display());
                 }
             }
-        })
-        .expect("App can always spawn threads");
+        },
+    )
+    .expect("App can always spawn threads");
+    cx.on_app_quit(move |_| {
+        if monitor.shutdown().is_err() {
+            log::error!("HangLogging worker panicked during shutdown");
+        }
+        async {}
+    })
+    .detach();
 }

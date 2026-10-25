@@ -1,8 +1,10 @@
 use crate::handle_open_request;
 use crate::restore_or_create_workspace;
+#[cfg(not(target_os = "aros"))]
 use agent_ui::ExternalSourcePrompt;
 use anyhow::{Context as _, Result, anyhow};
 use cli::{CliRequest, CliResponse, CliResponseSink};
+#[cfg(not(target_os = "aros"))]
 use cli::{IpcHandshake, ipc};
 use client::{ZedLink, parse_zed_link};
 use db::kvp::KeyValueStore;
@@ -57,6 +59,7 @@ pub enum OpenRequestKind {
     Extension {
         extension_id: String,
     },
+    #[cfg(not(target_os = "aros"))]
     AgentPanel {
         external_source_prompt: Option<ExternalSourcePrompt>,
     },
@@ -91,6 +94,7 @@ impl std::fmt::Debug for OpenRequestKind {
                 .debug_struct("Extension")
                 .field("extension_id", extension_id)
                 .finish(),
+            #[cfg(not(target_os = "aros"))]
             Self::AgentPanel {
                 external_source_prompt,
             } => f
@@ -155,14 +159,35 @@ impl OpenRequest {
         }
 
         for url in request.urls {
-            if let Some(server_name) = url.strip_prefix("zed-cli://") {
+            // No CLI-to-instance IPC on AROS, so the zed-cli:// scheme never
+            // matches there; the rest of the chain must still run.
+            #[cfg(not(target_os = "aros"))]
+            let cli_server_name = url.strip_prefix("zed-cli://");
+            #[cfg(target_os = "aros")]
+            let cli_server_name: Option<&str> = None;
+
+            if let Some(server_name) = cli_server_name {
                 this.kind = Some(OpenRequestKind::CliConnection(connect_to_cli(server_name)?));
             } else if let Some(action_index) = url.strip_prefix("zed-dock-action://") {
                 this.kind = Some(OpenRequestKind::DockMenuAction {
                     index: action_index.parse()?,
                 });
-            } else if let Some(file) = url.strip_prefix("file://") {
-                this.parse_file_path(file)
+            } else if {
+                #[cfg(target_os = "aros")]
+                { is_native_file_uri(&url) }
+                #[cfg(not(target_os = "aros"))]
+                { url.starts_with("file://") }
+            } {
+                #[cfg(target_os = "aros")]
+                {
+                    anyhow::ensure!(this.remote_connection.is_none(), "cannot mix native file URIs and remote paths");
+                    native_file_uri_path(&url)?;
+                    // Keep the encoded URI until derive_paths_with_position:
+                    // a raw Latin-1 DOS filename cannot pass through String.
+                    this.open_paths.push(url);
+                }
+                #[cfg(not(target_os = "aros"))]
+                this.parse_file_path(&url[7..])
             } else if let Some(file) = url.strip_prefix("zed://file") {
                 this.parse_file_path(file)
             } else if let Some(file) = url.strip_prefix("zed://ssh") {
@@ -172,7 +197,7 @@ impl OpenRequest {
                 this.kind = Some(OpenRequestKind::Extension {
                     extension_id: extension_id.to_string(),
                 });
-            } else if url.starts_with(agent_skills::SKILL_SHARE_LINK_PREFIX) {
+            } else if is_skill_share_link(&url) {
                 this.parse_skill_install_url(&url)?
             } else if let Some(agent_path) = url.strip_prefix("zed://agent") {
                 this.parse_agent_url(agent_path)
@@ -223,21 +248,32 @@ impl OpenRequest {
     fn parse_agent_url(&mut self, agent_path: &str) {
         // Format: "" or "?prompt=<text>".
         let agent_path = agent_path.strip_prefix('/').unwrap_or(agent_path);
-        let external_source_prompt = agent_path.strip_prefix('?').and_then(|query| {
-            url::form_urlencoded::parse(query.as_bytes())
-                .find_map(|(key, value)| (key == "prompt").then_some(value))
-                .and_then(|prompt| ExternalSourcePrompt::new(prompt.as_ref()))
-        });
-        self.kind = Some(OpenRequestKind::AgentPanel {
-            external_source_prompt,
-        });
+        #[cfg(not(target_os = "aros"))]
+        {
+            let external_source_prompt = agent_path.strip_prefix('?').and_then(|query| {
+                url::form_urlencoded::parse(query.as_bytes())
+                    .find_map(|(key, value)| (key == "prompt").then_some(value))
+                    .and_then(|prompt| ExternalSourcePrompt::new(prompt.as_ref()))
+            });
+            self.kind = Some(OpenRequestKind::AgentPanel {
+                external_source_prompt,
+            });
+        }
     }
 
     fn parse_skill_install_url(&mut self, url: &str) -> Result<()> {
         // Format: zed://skill?data=<base64url of SKILL.md contents>
-        let content = agent_skills::decode_skill_share_link(url)?;
-        self.kind = Some(OpenRequestKind::InstallSkill { content });
-        Ok(())
+        #[cfg(not(target_os = "aros"))]
+        {
+            let content = agent_skills::decode_skill_share_link(url)?;
+            self.kind = Some(OpenRequestKind::InstallSkill { content });
+            Ok(())
+        }
+        #[cfg(target_os = "aros")]
+        {
+            let _ = url;
+            anyhow::bail!("agent skills are not available on AROS")
+        }
     }
 
     fn parse_git_clone_url(&mut self, clone_path: &str) -> Result<()> {
@@ -430,6 +466,19 @@ pub fn listen_for_cli_connections(opener: OpenListener) -> Result<()> {
     Ok(())
 }
 
+/// Unreachable on AROS: `cli_server_name` is always `None` there, but the call
+/// site still has to type-check.
+#[cfg(target_os = "aros")]
+fn connect_to_cli(
+    _server_name: &str,
+) -> Result<(
+    mpsc::UnboundedReceiver<CliRequest>,
+    Box<dyn CliResponseSink>,
+)> {
+    anyhow::bail!("the CLI connection is not available on AROS")
+}
+
+#[cfg(not(target_os = "aros"))]
 fn connect_to_cli(
     server_name: &str,
 ) -> Result<(
@@ -1085,6 +1134,29 @@ async fn open_local_workspace(
     errored
 }
 
+#[cfg(target_os = "aros")]
+fn is_native_file_uri(text: &str) -> bool {
+    text.get(..7).is_some_and(|scheme| scheme.eq_ignore_ascii_case("file://"))
+}
+
+#[cfg(not(target_os = "aros"))]
+fn is_skill_share_link(url: &str) -> bool {
+    url.starts_with(agent_skills::SKILL_SHARE_LINK_PREFIX)
+}
+
+// The AROS build leaves the agent features out; a skill link then reaches the
+// unknown-URL error like any other unsupported link.
+#[cfg(target_os = "aros")]
+fn is_skill_share_link(_url: &str) -> bool {
+    false
+}
+
+#[cfg(target_os = "aros")]
+fn native_file_uri_path(text: &str) -> Result<PathBuf> {
+    let uri = url::Url::parse(text).context("invalid native file URI")?;
+    uri.to_file_path().map_err(|()| anyhow!("unsupported native file URI"))
+}
+
 pub async fn derive_paths_with_position(
     fs: &dyn Fs,
     path_strings: impl IntoIterator<Item = impl AsRef<str>>,
@@ -1092,6 +1164,16 @@ pub async fn derive_paths_with_position(
     let path_strings: Vec<_> = path_strings.into_iter().collect();
     let mut result = Vec::with_capacity(path_strings.len());
     for path_str in path_strings {
+        #[cfg(target_os = "aros")]
+        if is_native_file_uri(path_str.as_ref()) {
+            if let Some(mut path) = native_file_uri_path(path_str.as_ref()).log_err() {
+                if let Ok(canonicalized) = fs.canonicalize(&path).await {
+                    path = canonicalized;
+                }
+                result.push(PathWithPosition::from_path(path));
+            }
+            continue;
+        }
         let original_path = Path::new(path_str.as_ref());
         let mut parsed = PathWithPosition::parse_str(path_str.as_ref());
 
@@ -3050,5 +3132,34 @@ mod tests {
         );
         // File opened in existing window
         assert_eq!(cx.windows().len(), 1);
+    }
+}
+
+#[cfg(all(test, target_os = "aros"))]
+mod native_file_uri_tests {
+    use super::native_file_uri_path;
+    use std::os::unix::ffi::OsStrExt;
+
+    #[test]
+    fn native_consumer_preserves_dos_bytes() {
+        for (uri, bytes) in [
+            ("file:///RAM%3A", b"RAM:".as_slice()),
+            ("file:///RAM%3Amain.rs", b"RAM:main.rs".as_slice()),
+            ("file://localhost/RAM%3Amain.rs", b"RAM:main.rs".as_slice()),
+            ("FILE://LOCALHOST/RAM%3Amain.rs", b"RAM:main.rs".as_slice()),
+            ("file:///RAM%20Disk%3AZed%20QA/main.rs", b"RAM Disk:Zed QA/main.rs".as_slice()),
+            ("file:///RAM%3Adir//peer", b"RAM:dir//peer".as_slice()),
+            ("file:///RAM%3A.", b"RAM:.".as_slice()),
+            ("file:///RAM%3Acaf%E9.rs", b"RAM:caf\xe9.rs".as_slice()),
+        ] {
+            assert_eq!(native_file_uri_path(uri).expect("native file URI").as_os_str().as_bytes(), bytes);
+        }
+    }
+
+    #[test]
+    fn native_consumer_refuses_lossy_or_foreign_uris() {
+        for uri in ["file://remote/RAM%3Amain.rs", "file:///relative.rs", "file:///RAM%3Adir/../peer", "file:///RAM%3Adir/%2e/peer", "file:///RAM%3Aa%2Fb", "file:///RAM%3Aa%00b", "file:///RAM%3Aa%GG", "file:///RAM%3Aa?query", "file:///RAM%3Aa#fragment"] {
+            assert!(native_file_uri_path(uri).is_err(), "{uri}");
+        }
     }
 }

@@ -15,16 +15,19 @@ const _: () = assert!(
      Forks: update APP_NAME in crates/paths/src/paths.rs when renaming the binary.",
 );
 
+#[cfg(not(target_os = "aros"))]
 use agent_ui::AgentPanel;
 use anyhow::{Context as _, Result};
 use clap::Parser;
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::{Client, ProxySettings, RefreshLlmTokenListener, UserStore, parse_zed_link};
+#[cfg(not(target_os = "aros"))]
 use collab_ui::channel_view::ChannelView;
 use collections::HashMap;
 use crashes::InitCrashHandler;
 use db::kvp::{GlobalKeyValueStore, KeyValueStore};
 use editor::Editor;
+#[cfg(not(target_os = "aros"))]
 use extension::ExtensionHostProxy;
 use fs::{Fs, RealFs};
 use futures::{FutureExt, StreamExt, channel::oneshot, future};
@@ -35,12 +38,15 @@ use gpui::{
 };
 use gpui_platform;
 
+#[cfg(not(target_os = "aros"))]
 use gpui_tokio::Tokio;
 use language::LanguageRegistry;
 use onboarding::{FIRST_OPEN, show_onboarding_view};
 use project_panel::ProjectPanel;
+#[cfg(not(target_os = "aros"))]
 use prompt_store::PromptBuilder;
 use remote::RemoteConnectionOptions;
+#[cfg(not(target_os = "aros"))]
 use reqwest_client::ReqwestClient;
 
 use assets::Assets;
@@ -198,7 +204,22 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
 }
 static STARTUP_TIME: OnceLock<Instant> = OnceLock::new();
 
+
+#[cfg(target_os = "aros")]
+unsafe extern "C" {
+    fn zed_aros_relaunch_if_small_stack() -> i32;
+    fn zed_aros_prepare_process();
+}
+
 fn main() {
+    #[cfg(target_os = "aros")]
+    unsafe {
+        let result = zed_aros_relaunch_if_small_stack();
+        if result >= 0 { std::process::exit(result); }
+        zed_aros_prepare_process();
+    }
+    #[cfg(target_os = "aros")]
+    crashes::force_backtrace();
     STARTUP_TIME.get_or_init(|| Instant::now());
 
     // If this process was re-executed as a Linux sandbox helper, run that mode
@@ -207,7 +228,7 @@ fn main() {
     // own arguments.
     sandbox::run_sandbox_launcher_if_invoked();
 
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_os = "aros")))]
     util::prevent_root_execution();
 
     let args = Args::parse();
@@ -280,7 +301,10 @@ fn main() {
         }
     }
 
+
     let file_errors = init_paths();
+
+
     if !file_errors.is_empty() {
         files_not_created_on_launch(file_errors);
         return;
@@ -288,7 +312,15 @@ fn main() {
 
     zlog::init();
 
-    if stdout_is_a_pty() {
+    // On AROS the console Zed was started from is a terminal, but it is also
+    // behind the editor's own window and cannot be read while the editor runs,
+    // so logging there is logging nowhere. Use the file regardless.
+    #[cfg(target_os = "aros")]
+    let log_to_stdout = false;
+    #[cfg(not(target_os = "aros"))]
+    let log_to_stdout = stdout_is_a_pty();
+
+    if log_to_stdout {
         zlog::init_output_stdout();
     } else {
         let result = zlog::init_output_file(paths::log_file(), Some(paths::old_log_file()));
@@ -377,6 +409,12 @@ fn main() {
             use zed::mac_only_instance::*;
             ensure_only_instance() != IsOnlyInstance::Yes
         }
+
+        // AROS has no cross-process instance handshake; always the only one.
+        #[cfg(target_os = "aros")]
+        {
+            false
+        }
     };
     if failed_single_instance_check {
         println!("zed is already running");
@@ -444,7 +482,7 @@ fn main() {
     if !stdout_is_a_pty() {
         app.background_executor()
             .spawn(async {
-                #[cfg(unix)]
+                #[cfg(all(unix, not(target_os = "aros")))]
                 util::load_login_shell_environment().await.log_err();
                 shell_env_loaded_tx.send(()).ok();
             })
@@ -506,13 +544,23 @@ fn main() {
             std::env::consts::ARCH
         );
         let proxy_url = ProxySettings::get_global(cx).proxy_url();
-        let http = {
-            let _guard = Tokio::handle(cx).enter();
+        // Keep network-dependent services unavailable until the native socket,
+        // timer and TLS integration is qualified together on the target.
+        #[cfg(target_os = "aros")]
+        {
+            let _ = (&proxy_url, &user_agent);
+            cx.set_http_client(Arc::new(http_client::BlockedHttpClient::new()));
+        }
+        #[cfg(not(target_os = "aros"))]
+        {
+            let http = {
+                let _guard = Tokio::handle(cx).enter();
 
-            ReqwestClient::proxy_and_user_agent(proxy_url, &user_agent)
-                .expect("could not start HTTP client")
-        };
-        cx.set_http_client(Arc::new(http));
+                ReqwestClient::proxy_and_user_agent(proxy_url, &user_agent)
+                    .expect("could not start HTTP client")
+            };
+            cx.set_http_client(Arc::new(http));
+        }
 
         <dyn Fs>::set_global(fs.clone(), cx);
 
@@ -521,7 +569,9 @@ fn main() {
 
         OpenListener::set_global(cx, open_listener.clone());
 
+        #[cfg(not(target_os = "aros"))]
         extension::init(cx);
+        #[cfg(not(target_os = "aros"))]
         let extension_host_proxy = ExtensionHostProxy::global(cx);
 
         let client = Client::production(cx);
@@ -558,11 +608,13 @@ fn main() {
 
         let node_runtime = NodeRuntime::new(client.http_client(), Some(shell_env_loaded_rx), rx);
 
+#[cfg(not(target_os = "aros"))]
         debug_adapter_extension::init(extension_host_proxy.clone(), cx);
         languages::init(languages.clone(), fs.clone(), node_runtime.clone(), cx);
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.new(|cx| WorkspaceStore::new(client.clone(), cx));
 
+#[cfg(not(target_os = "aros"))]
         language_extension::init(
             language_extension::LspAccess::ViaWorkspaces({
                 let workspace_store = workspace_store.clone();
@@ -659,6 +711,7 @@ fn main() {
         dap_adapters::init(cx);
         auto_update_ui::init(cx);
         reliability::init(client.clone(), app_state.workspace_store.clone(), cx);
+        #[cfg(not(target_os = "aros"))]
         extension_host::init(
             extension_host_proxy.clone(),
             app_state.fs.clone(),
@@ -669,6 +722,7 @@ fn main() {
 
         theme_settings::init(theme::LoadThemes::All(Box::new(Assets)), cx);
         eager_load_active_theme_and_icon_theme(fs.clone(), cx);
+#[cfg(not(target_os = "aros"))]
         theme_extension::init(
             extension_host_proxy,
             ThemeRegistry::global(cx),
@@ -695,7 +749,9 @@ fn main() {
             app_state.user_store.clone(),
             cx,
         );
+        #[cfg(not(target_os = "aros"))]
         language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
+        #[cfg(not(target_os = "aros"))]
         acp_tools::init(cx);
         zed::telemetry_log::init(cx);
         zed::remote_debug::init(cx);
@@ -704,12 +760,14 @@ fn main() {
         web_search_providers::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         snippet_provider::init(cx);
         edit_prediction_registry::init(app_state.client.clone(), app_state.user_store.clone(), cx);
+        #[cfg(not(target_os = "aros"))]
         let prompt_builder = PromptBuilder::load(app_state.fs.clone(), stdout_is_a_pty(), cx);
         project::AgentRegistryStore::init_global(
             cx,
             app_state.fs.clone(),
             app_state.client.http_client(),
         );
+        #[cfg(not(target_os = "aros"))]
         agent_ui::init(
             app_state.fs.clone(),
             prompt_builder,
@@ -746,6 +804,7 @@ fn main() {
         project_panel::init(cx);
         outline_panel::init(cx);
         tasks_ui::init(cx);
+#[cfg(not(target_os = "aros"))]
         snippets_ui::init(cx);
         channel::init(&app_state.client.clone(), app_state.user_store.clone(), cx);
         search::init(cx);
@@ -770,8 +829,10 @@ fn main() {
         theme_selector::init(cx);
         settings_profile_selector::init(cx);
         language_tools::init(cx);
+#[cfg(not(target_os = "aros"))]
         call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
+#[cfg(not(target_os = "aros"))]
         collab_ui::init(&app_state, cx);
         git_ui::init(cx);
         feedback::init(cx);
@@ -779,8 +840,10 @@ fn main() {
         tabular_data_preview::init(cx);
         svg_preview::init(cx);
         onboarding::init(cx);
+        #[cfg(not(target_os = "aros"))]
         settings_ui::init(cx);
         keymap_editor::init(cx);
+#[cfg(not(target_os = "aros"))]
         extensions_ui::init(cx);
         edit_prediction::init(cx);
         inspector_ui::init(app_state.clone(), cx);
@@ -1035,6 +1098,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                 })
                 .detach_and_log_err(cx);
             }
+            #[cfg(not(target_os = "aros"))]
             OpenRequestKind::AgentPanel {
                 external_source_prompt,
             } => {
@@ -1078,6 +1142,9 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                         workspace::get_any_active_multi_workspace(app_state, cx.clone()).await?;
 
                     multi_workspace.update(cx, |_multi_workspace, _window, cx| {
+                        #[cfg(target_os = "aros")]
+                        let _ = (content, cx);
+                        #[cfg(not(target_os = "aros"))]
                         settings_ui::open_skill_creator(
                             settings_ui::pages::SkillCreatorOpenMode::Install { content },
                             Some(multi_workspace),
@@ -1332,23 +1399,36 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                 let workspace_window =
                     workspace::get_any_active_multi_workspace(app_state, cx.clone()).await?;
 
-                let workspace = workspace_window.read_with(cx, |mw, _| mw.workspace().clone())?;
-                let weak_workspace = workspace.downgrade();
-
-                let mut promises = Vec::new();
-                for (channel_id, heading) in request.open_channel_notes {
-                    promises.push(cx.update_window(workspace_window.into(), |_, window, cx| {
-                        ChannelView::open(
-                            client::ChannelId(channel_id),
-                            heading,
-                            workspace.clone(),
-                            window,
-                            cx,
-                        )
-                    })?)
+                // Channel notes belong to the collaboration features, which
+                // the AROS build leaves out.
+                #[cfg(target_os = "aros")]
+                {
+                    let _ = workspace_window;
+                    if !request.open_channel_notes.is_empty() {
+                        anyhow::bail!("channel notes are not available on AROS");
+                    }
                 }
-                for result in future::join_all(promises).await {
-                    result.notify_workspace_async_err(weak_workspace.clone(), cx);
+                #[cfg(not(target_os = "aros"))]
+                {
+                    let workspace =
+                        workspace_window.read_with(cx, |mw, _| mw.workspace().clone())?;
+                    let weak_workspace = workspace.downgrade();
+
+                    let mut promises = Vec::new();
+                    for (channel_id, heading) in request.open_channel_notes {
+                        promises.push(cx.update_window(workspace_window.into(), |_, window, cx| {
+                            ChannelView::open(
+                                client::ChannelId(channel_id),
+                                heading,
+                                workspace.clone(),
+                                window,
+                                cx,
+                            )
+                        })?)
+                    }
+                    for result in future::join_all(promises).await {
+                        result.notify_workspace_async_err(weak_workspace.clone(), cx);
+                    }
                 }
                 anyhow::Ok(())
             })
@@ -1805,7 +1885,35 @@ impl ToString for IdType {
     }
 }
 
+#[cfg(target_os = "aros")]
+fn native_path_url(path: &Path) -> Option<String> {
+    url::Url::from_file_path(path).ok().map(String::from)
+}
+
 fn parse_url_arg(arg: &str, cx: &App) -> String {
+    #[cfg(target_os = "aros")]
+    {
+        if arg.get(..7).is_some_and(|scheme| scheme.eq_ignore_ascii_case("file://"))
+            || arg.starts_with("zed://")
+            || arg.starts_with("zed-cli://")
+            || arg.starts_with("ssh://")
+            || parse_zed_link(arg, cx).is_some()
+        {
+            return arg.into();
+        }
+        if let Ok(path) = std::fs::canonicalize(Path::new(arg)) {
+            if let Some(uri) = native_path_url(&path) {
+                return uri;
+            }
+        }
+        if let Some(uri) = native_path_url(Path::new(arg)) {
+            return uri;
+        }
+        // Preserve relative paths and :line:column through the existing Zed
+        // path route. Only the file:// route carries canonical file URIs.
+        return format!("zed://file{}", urlencoding::encode(arg));
+    }
+    #[cfg(not(target_os = "aros"))]
     match std::fs::canonicalize(Path::new(&arg)) {
         Ok(path) => format!("file://{}", path.display()),
         Err(_) => {
@@ -2070,5 +2178,27 @@ fn check_for_conpty_dll() {
         }
     } else {
         log::warn!("Failed to load conpty.dll. Terminal will work with reduced functionality.");
+    }
+}
+
+#[cfg(all(test, target_os = "aros"))]
+mod native_cli_path_url_tests {
+    use super::native_path_url;
+    use std::{ffi::OsString, os::unix::ffi::OsStringExt, path::PathBuf};
+
+    #[test]
+    fn native_producer_preserves_dos_bytes() {
+        for (bytes, expected) in [
+            (b"RAM:".as_slice(), "file:///RAM%3A"),
+            (b"RAM:main.rs".as_slice(), "file:///RAM%3Amain.rs"),
+            (b"RAM:dir//peer".as_slice(), "file:///RAM%3Adir//peer"),
+            (b"RAM:.".as_slice(), "file:///RAM%3A."),
+            (b"RAM:caf\xe9.rs".as_slice(), "file:///RAM%3Acaf%E9.rs"),
+        ] {
+            let path = PathBuf::from(OsString::from_vec(bytes.to_vec()));
+            assert_eq!(native_path_url(&path).as_deref(), Some(expected));
+        }
+        assert!(native_path_url(&PathBuf::from("relative.rs")).is_none());
+        assert!(native_path_url(&PathBuf::from("RAM:dir/./peer")).is_none());
     }
 }

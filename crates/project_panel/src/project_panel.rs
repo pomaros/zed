@@ -16,6 +16,7 @@ use file_icons::FileIcons;
 use fs::TrashId;
 use git;
 use git::status::GitSummary;
+#[cfg(not(target_os = "aros"))]
 use git_ui_core::file_diff_view::FileDiffView;
 use gpui::{
     Action, Anchor, AnyElement, App, AsyncWindowContext, Bounds,
@@ -748,6 +749,7 @@ impl ProjectPanel {
                         }
                     }
                     project::Event::ActiveEntryChanged(None) => {
+                        #[cfg(not(target_os = "aros"))]
                         let is_active_item_file_diff_view = this
                             .workspace
                             .upgrade()
@@ -756,6 +758,8 @@ impl ProjectPanel {
                                 item.act_as_type(TypeId::of::<FileDiffView>(), cx).is_some()
                             })
                             .unwrap_or(false);
+                        #[cfg(target_os = "aros")]
+                        let is_active_item_file_diff_view = false;
                         if !is_active_item_file_diff_view {
                             this.marked_entries.clear();
                         }
@@ -4179,6 +4183,7 @@ impl ProjectPanel {
         cx: &mut Context<Self>,
     ) {
         let selected_files = self.file_abs_paths_to_diff(cx);
+        #[cfg(not(target_os = "aros"))]
         if let Some((file_path1, file_path2)) = selected_files {
             self.workspace
                 .update(cx, |workspace, cx| {
@@ -4194,6 +4199,9 @@ impl ProjectPanel {
                 })
                 .ok();
         }
+        // git_ui (the diff view) is gated off on AROS.
+        #[cfg(target_os = "aros")]
+        let _ = (selected_files, window);
     }
 
     fn open_system(&mut self, _: &OpenWithSystem, _: &mut Window, cx: &mut Context<Self>) {
@@ -7284,12 +7292,15 @@ impl ProjectPanel {
             cx.notify();
             return Ok(());
         }
+        #[cfg(not(target_os = "aros"))]
         let is_active_item_file_diff_view = self
             .workspace
             .upgrade()
             .and_then(|ws| ws.read(cx).active_item(cx))
             .map(|item| item.act_as_type(TypeId::of::<FileDiffView>(), cx).is_some())
             .unwrap_or(false);
+        #[cfg(target_os = "aros")]
+        let is_active_item_file_diff_view = false;
         if is_active_item_file_diff_view {
             return Ok(());
         }

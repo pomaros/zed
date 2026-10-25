@@ -64,16 +64,8 @@ path = "src/visual_test_runner.rs"
 required-features = ["visual-tests"]
 
 [dependencies]
-acp_thread.workspace = true
-acp_tools.workspace = true
 action_log = { workspace = true, optional = true }
 activity_indicator.workspace = true
-agent-client-protocol.workspace = true
-agent.workspace = true
-agent_servers = { workspace = true, optional = true }
-agent_settings.workspace = true
-agent_skills.workspace = true
-agent_ui = { workspace = true, features = ["audio"] }
 anyhow.workspace = true
 askpass.workspace = true
 assets.workspace = true
@@ -81,7 +73,6 @@ audio.workspace = true
 auto_update.workspace = true
 auto_update_ui.workspace = true
 breadcrumbs.workspace = true
-call.workspace = true
 call_hierarchy.workspace = true
 channel.workspace = true
 chrono.workspace = true
@@ -90,7 +81,6 @@ cli.workspace = true
 client.workspace = true
 clock = { workspace = true, optional = true }
 codestral.workspace = true
-collab_ui.workspace = true
 collections.workspace = true
 command_palette.workspace = true
 component_preview.workspace = true
@@ -100,7 +90,6 @@ copilot_ui.workspace = true
 crashes.workspace = true
 dap_adapters.workspace = true
 db.workspace = true
-debug_adapter_extension.workspace = true
 debugger_tools.workspace = true
 debugger_ui.workspace = true
 dev_container.workspace = true
@@ -108,9 +97,6 @@ diagnostics.workspace = true
 editor.workspace = true
 encoding_selector.workspace = true
 env_logger = { workspace = true, optional = true }
-extension.workspace = true
-extension_host.workspace = true
-extensions_ui.workspace = true
 feature_flags.workspace = true
 feedback.workspace = true
 file_finder.workspace = true
@@ -149,9 +135,7 @@ journal.workspace = true
 json_schema_store.workspace = true
 keymap_editor.workspace = true
 language.workspace = true
-language_extension.workspace = true
 language_model.workspace = true
-language_models.workspace = true
 language_onboarding.workspace = true
 language_selector.workspace = true
 language_tools.workspace = true
@@ -178,7 +162,6 @@ profiling.workspace = true
 project.workspace = true
 project_panel.workspace = true
 project_symbols.workspace = true
-prompt_store.workspace = true
 proto.workspace = true
 recent_projects.workspace = true
 release_channel.workspace = true
@@ -194,12 +177,9 @@ serde_json.workspace = true
 session.workspace = true
 settings.workspace = true
 settings_profile_selector.workspace = true
-settings_ui.workspace = true
 shellexpand.workspace = true
-sidebar.workspace = true
 smol.workspace = true
 snippet_provider.workspace = true
-snippets_ui.workspace = true
 svg_preview.workspace = true
 sysinfo.workspace = true
 tab_switcher.workspace = true
@@ -208,7 +188,6 @@ telemetry.workspace = true
 telemetry_events.workspace = true
 terminal_view.workspace = true
 theme.workspace = true
-theme_extension.workspace = true
 theme_selector.workspace = true
 theme_settings.workspace = true
 time.workspace = true
@@ -236,6 +215,37 @@ zlog.workspace = true
 zlog_settings.workspace = true
 ztracing.workspace = true
 
+
+# AROS cannot host these yet: the agent stack needs LMDB (memory-mapped, and
+# AROS has no file mapping), the extension stack a wasm runtime, collaboration
+# WebRTC. Everything else -- workspace, panels, terminal, LSP -- builds.
+[target.'cfg(not(target_os = "aros"))'.dependencies]
+acp_thread.workspace = true
+acp_tools.workspace = true
+agent-client-protocol.workspace = true
+agent.workspace = true
+agent_servers = { workspace = true, optional = true }
+agent_settings.workspace = true
+agent_skills.workspace = true
+agent_ui = { workspace = true, features = ["audio"] }
+call.workspace = true
+collab_ui.workspace = true
+debug_adapter_extension.workspace = true
+extension.workspace = true
+extension_host.workspace = true
+extensions_ui.workspace = true
+language_extension.workspace = true
+language_models.workspace = true
+prompt_store.workspace = true
+settings_ui.workspace = true
+sidebar.workspace = true
+snippets_ui.workspace = true
+theme_extension.workspace = true
+
+# Native AROS programs must carry every RustEmbed resource even in debug
+# builds: settings and keymaps, UI assets and grammar queries.
+[target.'cfg(target_os = "aros")'.dependencies]
+rust-embed = { workspace = true, features = ["debug-embed"] }
 [target.'cfg(target_os = "macos")'.dependencies]
 nix = { workspace = true, features = ["user"] }
 
@@ -243,6 +253,10 @@ nix = { workspace = true, features = ["user"] }
 etw_tracing.workspace = true
 windows = { workspace = true, features = ["Win32_System_Console", "Win32_System_Pipes"] }
 gpui = { workspace = true, features = ["profiler", "windows-manifest"] }
+
+# The AROS startup shim (c/native_startup.c) is compiled with the SDK clang.
+[build-dependencies]
+cc = "1"
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
 windows_resources.workspace = true
