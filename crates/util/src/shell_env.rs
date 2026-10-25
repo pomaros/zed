@@ -4,6 +4,7 @@ use std::path::Path;
 use anyhow::Context as _;
 use anyhow::Result;
 use collections::HashMap;
+#[cfg(not(target_os = "aros"))]
 use serde::Deserialize;
 
 #[cfg(not(target_os = "aros"))]

@@ -92,8 +92,12 @@ use std::{
     sync::atomic::{self, AtomicBool},
 };
 use terminal_view::terminal_panel::{self, TerminalPanel};
-use theme::{ActiveTheme, SystemAppearance, ThemeRegistry};
-use theme_settings::{ThemeSettings, load_user_theme};
+use theme::ActiveTheme;
+#[cfg(not(target_os = "aros"))]
+use theme::{SystemAppearance, ThemeRegistry};
+use theme_settings::ThemeSettings;
+#[cfg(not(target_os = "aros"))]
+use theme_settings::load_user_theme;
 use ui::{Navigable, NavigableEntry, PopoverMenuHandle, TintColor, prelude::*};
 use util::markdown::MarkdownString;
 use util::rel_path::RelPath;
@@ -103,9 +107,9 @@ use vim_mode_setting::VimModeSetting;
 use workspace::notifications::{NotificationId, dismiss_app_notification, show_app_notification};
 
 use workspace::{
-    AppState, MultiWorkspace, NewFile, NewWindow, OpenLog, Panel, Toast, Workspace,
-    WorkspaceSettings, create_and_open_local_file,
-    notifications::simple_message_notification::MessageNotification, open_new,
+    AppState, MultiWorkspace, NewFile, NewWindow, OpenLog, Toast, Workspace, WorkspaceSettings,
+    create_and_open_local_file, notifications::simple_message_notification::MessageNotification,
+    open_new,
 };
 use workspace::{CloseProject, CloseWindow, RestoreBanner, with_active_or_new_workspace};
 use workspace::{Pane, notifications::DetachAndPromptErr};
@@ -505,6 +509,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
                 .unwrap_or(true)
         });
 
+        #[cfg(not(target_os = "aros"))]
         let window_handle = window.window_handle();
         let multi_workspace_handle = cx.entity();
         cx.subscribe_in(
@@ -540,17 +545,15 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
         )
         .detach();
 
+        #[cfg(not(target_os = "aros"))]
         cx.defer(move |cx| {
             window_handle
                 .update(cx, |_, window, cx| {
-                    #[cfg(not(target_os = "aros"))]
-                    {
-                        let sidebar =
-                            cx.new(|cx| Sidebar::new(multi_workspace_handle.clone(), window, cx));
-                        multi_workspace_handle.update(cx, |multi_workspace, cx| {
-                            multi_workspace.register_sidebar(sidebar, cx);
-                        });
-                    }
+                    let sidebar =
+                        cx.new(|cx| Sidebar::new(multi_workspace_handle.clone(), window, cx));
+                    multi_workspace_handle.update(cx, |multi_workspace, cx| {
+                        multi_workspace.register_sidebar(sidebar, cx);
+                    });
                 })
                 .ok();
         });
@@ -841,7 +844,8 @@ fn initialize_panels(window: &mut Window, cx: &mut Context<Workspace>) -> Task<a
     })
 }
 
-fn setup_or_teardown_ai_panel<P: Panel>(
+#[cfg(not(target_os = "aros"))]
+fn setup_or_teardown_ai_panel<P: workspace::Panel>(
     workspace: &mut Workspace,
     window: &mut Window,
     cx: &mut Context<Workspace>,

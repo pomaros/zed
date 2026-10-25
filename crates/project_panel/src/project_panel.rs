@@ -49,8 +49,9 @@ use settings::{
     update_settings_file,
 };
 use smallvec::SmallVec;
+#[cfg(not(target_os = "aros"))]
+use std::any::TypeId;
 use std::{
-    any::TypeId,
     cell::OnceCell,
     cmp,
     collections::HashSet,

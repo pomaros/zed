@@ -25,6 +25,7 @@ use remote::{RemoteConnectionOptions, WslConnectionOptions};
 use settings::Settings;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+#[cfg(not(target_os = "aros"))]
 use std::thread;
 use std::time::Duration;
 use ui::SharedString;
@@ -63,6 +64,7 @@ pub enum OpenRequestKind {
     AgentPanel {
         external_source_prompt: Option<ExternalSourcePrompt>,
     },
+    #[cfg(not(target_os = "aros"))]
     InstallSkill {
         /// Full `SKILL.md` contents embedded in a `zed://skill` share link.
         content: String,
@@ -101,6 +103,7 @@ impl std::fmt::Debug for OpenRequestKind {
                 .debug_struct("AgentPanel")
                 .field("external_source_prompt", external_source_prompt)
                 .finish(),
+            #[cfg(not(target_os = "aros"))]
             Self::InstallSkill { content } => f
                 .debug_struct("InstallSkill")
                 .field("content_len", &content.len())
@@ -254,9 +257,11 @@ impl OpenRequest {
 
     fn parse_agent_url(&mut self, agent_path: &str) {
         // Format: "" or "?prompt=<text>".
-        let agent_path = agent_path.strip_prefix('/').unwrap_or(agent_path);
+        #[cfg(target_os = "aros")]
+        let _ = agent_path;
         #[cfg(not(target_os = "aros"))]
         {
+            let agent_path = agent_path.strip_prefix('/').unwrap_or(agent_path);
             let external_source_prompt = agent_path.strip_prefix('?').and_then(|query| {
                 url::form_urlencoded::parse(query.as_bytes())
                     .find_map(|(key, value)| (key == "prompt").then_some(value))

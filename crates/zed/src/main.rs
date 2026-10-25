@@ -30,7 +30,9 @@ use editor::Editor;
 #[cfg(not(target_os = "aros"))]
 use extension::ExtensionHostProxy;
 use fs::{Fs, RealFs};
-use futures::{FutureExt, StreamExt, channel::oneshot, future};
+#[cfg(not(target_os = "aros"))]
+use futures::future;
+use futures::{FutureExt, StreamExt, channel::oneshot};
 use git::GitHostingProviderRegistry;
 use git_ui::clone::clone_and_open;
 use gpui::{
@@ -72,11 +74,11 @@ use theme::{ActiveTheme, GlobalTheme, ThemeRegistry};
 use theme_settings::load_user_theme;
 use util::{ResultExt, maybe};
 use uuid::Uuid;
+#[cfg(not(target_os = "aros"))]
+use workspace::notifications::NotifyResultExt;
 use workspace::{
     AppState, MultiWorkspace, SerializedWorkspaceLocation, SessionWorkspace, Toast,
-    WorkspaceSettings, WorkspaceStore,
-    notifications::{NotificationId, NotifyResultExt},
-    restore_multiworkspace,
+    WorkspaceSettings, WorkspaceStore, notifications::NotificationId, restore_multiworkspace,
 };
 use zed::{
     OpenListener, OpenRequest, RawOpenRequest, app_menus, build_window_options,
@@ -674,6 +676,7 @@ fn main() {
         })
         .detach();
 
+        #[cfg(not(target_os = "aros"))]
         let is_new_install = matches!(&installation_id, Some(IdType::New(_)));
 
         // We should rename these in the future to `first app open`, `first app open for release channel`, and `app open`
@@ -1135,15 +1138,13 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                 })
                 .detach_and_log_err(cx);
             }
+            #[cfg(not(target_os = "aros"))]
             OpenRequestKind::InstallSkill { content } => {
                 cx.spawn(async move |cx| {
                     let multi_workspace =
                         workspace::get_any_active_multi_workspace(app_state, cx.clone()).await?;
 
                     multi_workspace.update(cx, |_multi_workspace, _window, cx| {
-                        #[cfg(target_os = "aros")]
-                        let _ = (content, cx);
-                        #[cfg(not(target_os = "aros"))]
                         settings_ui::open_skill_creator(
                             settings_ui::pages::SkillCreatorOpenMode::Install { content },
                             Some(multi_workspace),

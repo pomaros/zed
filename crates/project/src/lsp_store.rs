@@ -95,15 +95,16 @@ use language::{
     range_from_lsp, range_to_lsp,
     row_chunk::RowChunk,
 };
+#[cfg(not(target_os = "aros"))]
+use lsp::LanguageServerBinaryOptions;
 use lsp::{
     AdapterServerCapabilities, CodeActionKind, CompletionContext, DEFAULT_LSP_REQUEST_TIMEOUT,
     DiagnosticServerCapabilities, DiagnosticSeverity, DiagnosticTag,
     DidChangeWatchedFilesRegistrationOptions, Edit, FileOperationFilter, FileOperationPatternKind,
     FileOperationRegistrationOptions, FileRename, FileSystemWatcher, LanguageServer,
-    LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerId, LanguageServerName,
-    LanguageServerSelector, LspRequestFuture, MessageActionItem, MessageType, OneOf,
-    RenameFilesParams, TextEdit, Uri, WillRenameFiles, WorkDoneProgressCancelParams,
-    notification::DidRenameFiles,
+    LanguageServerBinary, LanguageServerId, LanguageServerName, LanguageServerSelector,
+    LspRequestFuture, MessageActionItem, MessageType, OneOf, RenameFilesParams, TextEdit, Uri,
+    WillRenameFiles, WorkDoneProgressCancelParams, notification::DidRenameFiles,
 };
 use node_runtime::read_package_installed_version;
 use parking_lot::Mutex;

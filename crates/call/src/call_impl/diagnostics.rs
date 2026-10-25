@@ -235,7 +235,18 @@ impl Serialize for ConnectionQualityDTO {
     }
 }
 
-#[cfg_attr(any(test, feature = "test-support"), allow(dead_code))]
+// The stub statistics, on the targets without a LiveKit WebRTC backend, read
+// none of these fields.
+#[cfg_attr(
+    any(
+        test,
+        feature = "test-support",
+        all(target_os = "windows", target_env = "gnu"),
+        target_os = "freebsd",
+        target_os = "aros"
+    ),
+    allow(dead_code)
+)]
 struct TrackContext {
     participant_id: String,
     participant_name: String,
@@ -250,7 +261,18 @@ struct PollResult {
 }
 
 #[derive(Clone, Copy)]
-#[cfg_attr(any(test, feature = "test-support"), allow(dead_code))]
+// The stub statistics, on the targets without a LiveKit WebRTC backend, read
+// none of these fields.
+#[cfg_attr(
+    any(
+        test,
+        feature = "test-support",
+        all(target_os = "windows", target_env = "gnu"),
+        target_os = "freebsd",
+        target_os = "aros"
+    ),
+    allow(dead_code)
+)]
 struct InboundCounters {
     packets_received: u64,
     packets_lost: i64,

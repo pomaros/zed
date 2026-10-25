@@ -6,6 +6,13 @@
 //! in-process HTTP/HTTPS proxy (the `http_proxy` crate) that this crate
 //! constructs and owns; callers only describe intent via [`SandboxPolicy`].
 
+// Without a backend (e.g. FreeBSD, AROS), `wrap` reports
+// `UnsupportedPlatform` and the backend-only state and helpers go unused.
+#![cfg_attr(
+    not(any(target_os = "linux", target_os = "macos", target_os = "windows")),
+    allow(dead_code)
+)]
+
 use std::{
     collections::HashMap,
     fmt,
