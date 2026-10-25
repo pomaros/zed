@@ -589,6 +589,7 @@ impl LanguageServer {
     /// stdio to this socket. The server sees this side's file URIs (on AROS
     /// `file:///RAM%3Adir/f.rs`), so it needs the same files under the same
     /// names, through a shared volume or a relay that translates the paths.
+    #[cfg(target_os = "aros")]
     pub async fn new_tcp(
         addr: std::net::SocketAddr,
         stderr_capture: Arc<Mutex<Option<String>>>,
