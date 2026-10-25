@@ -84,7 +84,6 @@ num_cpus = "1.13"
 parking = "2.0.0"
 parking_lot.workspace = true
 postage = { workspace = true, features = ["blocking"], optional = true }
-proptest = { workspace = true, optional = true }
 chrono = { workspace = true, default-features = true }
 profiling.workspace = true
 rand = { workspace = true, features = ["small_rng", "thread_rng"] }
@@ -133,6 +132,11 @@ async-channel = { workspace = true, features = ["std"] }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 pollster.workspace = true
+
+# proptest's rusty-fork/wait-timeout deps have no AROS arm; the property_test
+# machinery is cfg-gated off there (src/color.rs, src/test.rs), so the dep is too.
+[target.'cfg(not(target_os = "aros"))'.dependencies]
+proptest = { workspace = true, optional = true }
 
 [target.'cfg(any(target_os = "macos", target_os = "linux", target_os = "windows", target_os = "ios"))'.dependencies]
 async-tungstenite = { workspace = true, optional = true }

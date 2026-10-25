@@ -65,6 +65,8 @@ gpui_linux.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gpui_wgpu = { workspace = true, optional = true }
+[target.'cfg(target_os = "aros")'.dependencies]
+gpui_aros.workspace = true
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 gpui_web.workspace = true

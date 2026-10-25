@@ -69,7 +69,7 @@ mod util;
 mod view;
 mod window;
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(any(test, all(feature = "test-support", not(target_os = "aros"))))]
 pub use proptest;
 #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
 pub use seeds::calculate_seeds;

@@ -1,0 +1,40 @@
+# The AROS GPUI backend from pomaros/gpui-aros (see UPSTREAM and
+# script/sync-gpui-aros), built against Zed's in-tree gpui. Only this manifest
+# differs from gpui-aros, where the backend builds on the gpui-pre snapshots.
+
+[package]
+name = "gpui_aros"
+version = "0.1.0"
+publish.workspace = true
+edition.workspace = true
+license = "Apache-2.0"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/gpui_aros.rs"
+
+# Host-compilable core (atlas / renderer / input / damage): the porting
+# conformance suite runs these under plain `cargo test -p gpui_aros`.
+[dependencies]
+gpui.workspace = true
+anyhow.workspace = true
+collections.workspace = true
+etagere = "0.2"
+log.workspace = true
+parking_lot.workspace = true
+tiny-skia = "0.11"
+
+# AROS-only shell (window / platform / dispatcher / text).
+[target.'cfg(target_os = "aros")'.dependencies]
+# Only for `CosmicTextSystem` (cosmic-text / swash / fontdb, OS-independent).
+gpui_wgpu.workspace = true
+crossbeam-channel = "0.5"
+futures.workspace = true
+smallvec.workspace = true
+uuid.workspace = true
+raw-window-handle = "0.6"
+
+[build-dependencies]
+cc = "1"

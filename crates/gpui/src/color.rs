@@ -345,7 +345,7 @@ pub struct Hsla {
     pub a: f32,
 }
 
-#[cfg(feature = "proptest")]
+#[cfg(all(feature = "proptest", not(target_os = "aros")))]
 mod property {
     use super::Hsla;
     use proptest::prelude::*;
@@ -912,6 +912,18 @@ impl Background {
     pub fn as_solid(&self) -> Option<Hsla> {
         if self.tag == BackgroundTag::Solid {
             Some(self.solid)
+        } else {
+            None
+        }
+    }
+
+    /// Returns the CSS angle (degrees, 0 pointing up, clockwise) and the two
+    /// color stops if this is a linear gradient, None otherwise. Lets
+    /// out-of-tree renderers (which can't read the pub(crate) fields the GPU
+    /// backends memcpy into shader uniforms) paint gradients.
+    pub fn as_linear_gradient(&self) -> Option<(f32, [LinearColorStop; 2])> {
+        if self.tag == BackgroundTag::LinearGradient {
+            Some((self.gradient_angle_or_pattern_height, self.colors))
         } else {
             None
         }

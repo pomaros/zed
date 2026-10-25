@@ -27,6 +27,10 @@
 //! ```
 use crate::{Entity, Subscription, TestAppContext, TestDispatcher, calculate_seeds};
 use futures::StreamExt as _;
+// proptest pulls rusty-fork/wait-timeout, which have no AROS arm; the
+// property_test machinery is gated off there (the rest of test-support —
+// e.g. render_to_image for headless screenshots — works unchanged).
+#[cfg(not(target_os = "aros"))]
 use proptest::prelude::{Just, Strategy, any};
 use std::{
     env,
@@ -40,6 +44,7 @@ use std::{
 ///
 /// Note: this function is not intended to be used directly. Rather, it is
 /// public so that it can be used from the `property_test` macro.
+#[cfg(not(target_os = "aros"))]
 pub fn seed_strategy() -> impl Strategy<Value = u64> {
     match std::env::var("SEED") {
         Ok(val) => Just(val.parse().unwrap()).boxed(),
@@ -54,6 +59,7 @@ pub fn seed_strategy() -> impl Strategy<Value = u64> {
 ///
 /// Note: this function is not intended to be used directly. Rather, it is
 /// public so that it can be used from the `property_test` macro.
+#[cfg(not(target_os = "aros"))]
 pub fn apply_seed_to_proptest_config(
     mut config: proptest::test_runner::Config,
 ) -> proptest::test_runner::Config {

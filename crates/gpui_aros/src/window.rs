@@ -1,0 +1,895 @@
+//! An AROS Intuition window, wrapping the C glue handle.
+
+use std::cell::{Cell, RefCell};
+use std::ffi::CString;
+use std::os::raw::{c_int, c_void};
+use std::rc::Rc;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use gpui::{
+    AnyWindowHandle, Bounds, Capslock, DevicePixels, DispatchEventResult, GpuSpecs, KeyDownEvent,
+    KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
+    PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
+    Scene, ScrollDelta, ScrollEvent, ScrollSource, Size, TouchPhase, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowParams, WindowVisibility, px,
+};
+use raw_window_handle::{
+    DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, WindowHandle,
+};
+
+use crate::glue::{self, GpaEvent, GpaMenuSpec};
+use crate::input::{self, key_name, latin1_to_string, modifiers_from_qualifier};
+use crate::menus::MenuState;
+use crate::renderer::CpuRenderer;
+
+#[derive(Default)]
+struct ArosWindowCallbacks {
+    request_frame: Option<Box<dyn FnMut(RequestFrameOptions)>>,
+    input: Option<Box<dyn FnMut(PlatformInput) -> DispatchEventResult>>,
+    active_status_change: Option<Box<dyn FnMut(bool)>>,
+    hover_status_change: Option<Box<dyn FnMut(bool)>>,
+    resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
+    moved: Option<Box<dyn FnMut()>>,
+    should_close: Option<Box<dyn FnMut() -> bool>>,
+    close: Option<Box<dyn FnOnce()>>,
+    appearance_changed: Option<Box<dyn FnMut()>>,
+    visibility_change: Option<Box<dyn FnMut(WindowVisibility)>>,
+    hit_test_window_control: Option<Box<dyn FnMut() -> Option<WindowControlArea>>>,
+}
+
+struct ArosWindowState {
+    handle: *mut c_void,
+    renderer: CpuRenderer,
+    bounds: Bounds<Pixels>,
+    title: String,
+    input_handler: Option<PlatformInputHandler>,
+    is_active: bool,
+    is_hovered: bool,
+    mouse_position: Point<Pixels>,
+    modifiers: Modifiers,
+    capslock: Capslock,
+    pressed_button: Option<MouseButton>,
+    /// Whether the right button is currently routed to us rather than to
+    /// Intuition's menu strip (see `apply_rmb_trap`).
+    rmb_trap: bool,
+    /// Multi-click synthesis (double-click open, triple-click select):
+    /// Intuition reports raw button events with no click chaining, so we
+    /// track (button, when, where, count) ourselves — same button within
+    /// [`MULTI_CLICK_INTERVAL`] and [`MULTI_CLICK_SLOP`] continues the
+    /// chain, anything else resets to 1.
+    last_click: Option<(MouseButton, Instant, Point<Pixels>, usize)>,
+    closed: bool,
+}
+
+/// Max gap between presses that still chains a multi-click (macOS default).
+const MULTI_CLICK_INTERVAL: Duration = Duration::from_millis(500);
+/// Max pointer travel (either axis, px) that still chains a multi-click.
+const MULTI_CLICK_SLOP: f32 = 4.0;
+
+pub(crate) struct ArosWindowInner {
+    state: RefCell<ArosWindowState>,
+    callbacks: RefCell<ArosWindowCallbacks>,
+    display: Rc<dyn PlatformDisplay>,
+    atlas: Arc<dyn PlatformAtlas>,
+    /// Shared with the platform: the flattened menu spec + action registry
+    /// + gpui's app-menu-action callback (see `menus.rs`).
+    menu_state: Rc<RefCell<MenuState>>,
+    /// This window's gpui handle, and the platform's notion of the active
+    /// window (shared cell): Intuition's ACTIVEWINDOW/INACTIVEWINDOW keep it
+    /// true, and a closing window never stays the active one.
+    handle: AnyWindowHandle,
+    active_window: Rc<Cell<Option<AnyWindowHandle>>>,
+}
+
+impl Drop for ArosWindowInner {
+    fn drop(&mut self) {
+        let handle = self.state.borrow().handle;
+        if !handle.is_null() {
+            // SAFETY: handle came from gpa_open_window and is closed once.
+            unsafe { glue::gpa_close_window(handle) };
+        }
+    }
+}
+
+pub struct ArosWindow {
+    inner: Rc<ArosWindowInner>,
+    #[allow(dead_code)]
+    handle: AnyWindowHandle,
+}
+
+impl ArosWindow {
+    pub(crate) fn open(
+        handle: AnyWindowHandle,
+        params: WindowParams,
+        display: Rc<dyn PlatformDisplay>,
+        menu_state: Rc<RefCell<MenuState>>,
+        active_window: Rc<Cell<Option<AnyWindowHandle>>>,
+    ) -> anyhow::Result<Self> {
+        let bounds = params.bounds;
+        let width = f32::from(bounds.size.width).max(1.0) as i32;
+        let height = f32::from(bounds.size.height).max(1.0) as i32;
+        let x = f32::from(bounds.origin.x) as i32;
+        let y = f32::from(bounds.origin.y) as i32;
+
+        let title = params
+            .titlebar
+            .as_ref()
+            .and_then(|t| t.title.as_ref())
+            .map(|t| t.to_string())
+            .unwrap_or_default();
+        let c_title = CString::new(title.clone()).unwrap_or_default();
+
+        // SAFETY: FFI to the glue; returns null on failure.
+        let raw = unsafe { glue::gpa_open_window(x, y, width, height, c_title.as_ptr()) };
+        if raw.is_null() {
+            anyhow::bail!("gpa_open_window failed");
+        }
+
+        // The drawable is the window interior, one device pixel per point:
+        // the CPU renderer blits straight into the RastPort.
+        let device_size = device_size(width, height);
+        let renderer = CpuRenderer::new(device_size);
+        let atlas: Arc<dyn PlatformAtlas> = renderer.sprite_atlas();
+
+        let state = ArosWindowState {
+            handle: raw,
+            renderer,
+            bounds,
+            title,
+            input_handler: None,
+            is_active: true,
+            is_hovered: false,
+            mouse_position: Point::default(),
+            modifiers: Modifiers::default(),
+            capslock: Capslock::default(),
+            pressed_button: None,
+            rmb_trap: false,
+            last_click: None,
+            closed: false,
+        };
+
+        let inner = Rc::new(ArosWindowInner {
+            state: RefCell::new(state),
+            callbacks: RefCell::new(ArosWindowCallbacks::default()),
+            display,
+            atlas,
+            menu_state,
+            handle,
+            active_window,
+        });
+
+        // Menus set before this window existed apply to it too (the strip
+        // is per window on Amiga).
+        inner.apply_menus();
+
+        Ok(Self { inner, handle })
+    }
+
+    pub(crate) fn inner(&self) -> Rc<ArosWindowInner> {
+        self.inner.clone()
+    }
+}
+
+impl ArosWindowInner {
+    /// Union signal mask for this window's message port.
+    pub(crate) fn sigmask(&self) -> u32 {
+        let handle = self.state.borrow().handle;
+        if handle.is_null() {
+            return 0;
+        }
+        // SAFETY: valid handle.
+        unsafe { glue::gpa_window_sigmask(handle) }
+    }
+
+    /// Fire the stored request-frame callback (GPUI draws the scene within it).
+    pub(crate) fn request_frame(&self) {
+        if self.state.borrow().closed {
+            return;
+        }
+        let taken = self.callbacks.borrow_mut().request_frame.take();
+        if let Some(mut f) = taken {
+            let started = Instant::now();
+            f(RequestFrameOptions::default());
+            crate::stats::frame(started.elapsed());
+            self.callbacks.borrow_mut().request_frame = Some(f);
+        }
+    }
+
+    /// Drain queued Intuition events and dispatch to the stored callbacks.
+    pub(crate) fn poll_events(&self) {
+        let handle = self.state.borrow().handle;
+        if handle.is_null() {
+            return;
+        }
+        let mut event = GpaEvent::default();
+        // SAFETY: valid handle; gpa_poll_event returns 1 while events remain.
+        while unsafe { glue::gpa_poll_event(handle, &mut event) } == 1 {
+            crate::stats::event();
+            self.dispatch_event(&event);
+            if self.state.borrow().closed {
+                return;
+            }
+        }
+    }
+
+    fn dispatch_event(&self, event: &GpaEvent) {
+        match event.kind {
+            glue::GPA_EVENT_CLOSE => self.handle_close(),
+            glue::GPA_EVENT_NEWSIZE => self.handle_resize(),
+            glue::GPA_EVENT_ACTIVATE => self.handle_activate(event.code != 0),
+            glue::GPA_EVENT_REFRESH => {
+                // Externally damaged (exposed) — the diff won't see it, so
+                // force a full repaint + re-blit.
+                self.state.borrow_mut().renderer.invalidate();
+                self.request_frame()
+            }
+            glue::GPA_EVENT_MOUSEMOVE => {
+                let position = self.set_mouse_position(event.x, event.y);
+                let modifiers = self.sync_modifiers(event.qualifier);
+                let pressed_button = self.state.borrow().pressed_button;
+                self.fire_input(PlatformInput::MouseMove(MouseMoveEvent {
+                    position,
+                    pressed_button,
+                    modifiers,
+                }));
+            }
+            glue::GPA_EVENT_MOUSEDOWN => {
+                let position = self.set_mouse_position(event.x, event.y);
+                let button = map_button(event.code);
+                let modifiers = self.sync_modifiers(event.qualifier);
+                let now = Instant::now();
+                let click_count = {
+                    let mut st = self.state.borrow_mut();
+                    let count = match st.last_click {
+                        Some((b, t, p, c))
+                            if b == button
+                                && now.duration_since(t) <= MULTI_CLICK_INTERVAL
+                                && (f32::from(position.x) - f32::from(p.x)).abs()
+                                    <= MULTI_CLICK_SLOP
+                                && (f32::from(position.y) - f32::from(p.y)).abs()
+                                    <= MULTI_CLICK_SLOP =>
+                        {
+                            c + 1
+                        }
+                        _ => 1,
+                    };
+                    st.last_click = Some((button, now, position, count));
+                    st.pressed_button = Some(button);
+                    count
+                };
+                self.fire_input(PlatformInput::MouseDown(MouseDownEvent {
+                    button,
+                    position,
+                    modifiers,
+                    click_count,
+                    first_mouse: false,
+                }));
+            }
+            glue::GPA_EVENT_MOUSEUP => {
+                let position = self.set_mouse_position(event.x, event.y);
+                let button = map_button(event.code);
+                let modifiers = self.sync_modifiers(event.qualifier);
+                let click_count = {
+                    let mut st = self.state.borrow_mut();
+                    st.pressed_button = None;
+                    // The up mirrors its down's count so gpui's click
+                    // handler sees a consistent pair.
+                    match st.last_click {
+                        Some((b, _, _, c)) if b == button => c,
+                        _ => 1,
+                    }
+                };
+                // A clear deferred by `apply_rmb_trap` (Ctrl released while
+                // the button was still down) applies now that it is up.
+                self.apply_rmb_trap(modifiers.control);
+                self.fire_input(PlatformInput::MouseUp(MouseUpEvent {
+                    button,
+                    position,
+                    modifiers,
+                    click_count,
+                }));
+            }
+            glue::GPA_EVENT_RAWKEY => self.handle_rawkey(event),
+            glue::GPA_EVENT_MENUPICK => self.handle_menu_pick(event.code),
+            _ => {}
+        }
+    }
+
+    /// Rebuild this window's Intuition menu strip from the shared spec
+    /// (no-op while the spec is empty).
+    pub(crate) fn apply_menus(&self) {
+        let handle = self.state.borrow().handle;
+        if handle.is_null() {
+            return;
+        }
+        let menu_state = self.menu_state.borrow();
+        let specs: Vec<GpaMenuSpec> = menu_state
+            .spec
+            .iter()
+            .map(|item| GpaMenuSpec {
+                level: item.level,
+                id: item.id,
+                label: item.label.as_ptr(),
+                commkey: item
+                    .commkey
+                    .as_ref()
+                    .map_or(std::ptr::null(), |c| c.as_ptr()),
+                disabled: item.disabled as c_int,
+                checked: item.checked as c_int,
+            })
+            .collect();
+        if specs.is_empty() {
+            return;
+        }
+        // SAFETY: valid handle; the CStrings behind the pointers live in
+        // `menu_state.spec`, held borrowed across the call, and the glue
+        // copies everything it keeps.
+        unsafe { glue::gpa_set_menus(handle, specs.as_ptr(), specs.len() as c_int) };
+    }
+
+    /// A menu item was picked: route the registered action through gpui's
+    /// `on_app_menu_action` callback. The callback is taken out for the
+    /// call so a reentrant `set_menus` from the action can't double-borrow.
+    fn handle_menu_pick(&self, id: c_int) {
+        if id < 0 {
+            return;
+        }
+        let (action, mut callback) = {
+            let mut menu_state = self.menu_state.borrow_mut();
+            let action = menu_state
+                .actions
+                .get(id as usize)
+                .map(|a| a.boxed_clone());
+            let callback = menu_state.on_action.take();
+            (action, callback)
+        };
+        if let (Some(action), Some(f)) = (&action, callback.as_mut()) {
+            f(action.as_ref());
+        }
+        if let Some(f) = callback {
+            let mut menu_state = self.menu_state.borrow_mut();
+            if menu_state.on_action.is_none() {
+                menu_state.on_action = Some(f);
+            }
+        }
+    }
+
+    /// Translate an Intuition RAWKEY event: update the modifier/capslock
+    /// state from the message qualifiers, route NewMouse wheel codes to
+    /// ScrollWheel, and emit KeyDown/KeyUp with a [`Keystroke`] built from
+    /// the keymap.library translation the C glue already performed
+    /// (`base_chars` = unmodified key for the binding name, `chars` = the
+    /// typed characters).
+    /// Adopt the modifier state carried by an IntuiMessage qualifier —
+    /// authoritative per message, for MOUSE events as much as keys. Mouse
+    /// handlers used to reuse a cache updated only by rawkey traffic, so
+    /// one lost modifier-up (e.g. released while the host window wasn't
+    /// key) latched ctrl/shift onto every later click: single clicks
+    /// multi-selected, Esc arrived as ctrl-Esc, typed chars were
+    /// suppressed. Fires ModifiersChanged exactly once per transition.
+    /// Route the right button to us while Ctrl is held, so a Ctrl+right-click
+    /// reaches the app as an ordinary `MouseButton::Right` press and opens the
+    /// context menu — on every other platform that is just a right-click.
+    ///
+    /// Plain right-click has to keep working as Intuition's menu gesture: on
+    /// AmigaOS the right button *is* the menu button, and the window carries a
+    /// real menu strip. Intuition decides between the two per input event, by
+    /// reading `WFLG_RMBTRAP` from the window struct itself, so arming the flag
+    /// only while Ctrl is down gives us both behaviours.
+    ///
+    /// Clearing is deferred while a button is down: dropping the flag between a
+    /// press and its release would send the `MENUUP` to Intuition instead of to
+    /// us, leaving gpui with a button it thinks is still held.
+    fn apply_rmb_trap(&self, want: bool) {
+        let (handle, apply) = {
+            let mut state = self.state.borrow_mut();
+            if state.rmb_trap == want {
+                return;
+            }
+            if !want && state.pressed_button.is_some() {
+                // Re-evaluated on the next modifier change after the release.
+                return;
+            }
+            state.rmb_trap = want;
+            (state.handle, true)
+        };
+        if apply && !handle.is_null() {
+            // SAFETY: valid handle; the glue guards its own window pointer.
+            unsafe { glue::gpa_set_rmb_trap(handle, want as c_int) };
+        }
+    }
+
+    fn sync_modifiers(&self, qualifier: c_int) -> Modifiers {
+        let modifiers = modifiers_from_qualifier(qualifier);
+        let capslock = Capslock {
+            on: qualifier & input::IEQUALIFIER_CAPSLOCK != 0,
+        };
+        let changed = {
+            let mut state = self.state.borrow_mut();
+            let changed = state.modifiers != modifiers || state.capslock != capslock;
+            state.modifiers = modifiers;
+            state.capslock = capslock;
+            changed
+        };
+        if changed {
+            self.apply_rmb_trap(modifiers.control);
+            self.fire_input(PlatformInput::ModifiersChanged(ModifiersChangedEvent {
+                modifiers,
+                capslock,
+            }));
+        }
+        modifiers
+    }
+
+    fn handle_rawkey(&self, event: &GpaEvent) {
+        let is_up = event.code & input::IECODE_UP_PREFIX != 0;
+        let down_code = event.code & !input::IECODE_UP_PREFIX;
+        let qualifier = event.qualifier;
+
+        let modifiers = self.sync_modifiers(qualifier);
+        let position = self.state.borrow().mouse_position;
+
+        // NewMouse standard: the scroll wheel rides the rawkey stream.
+        // Wheel-away-from-user scrolls up = positive y lines (the gpui
+        // convention shared by the Windows/Linux backends); left mirrors
+        // that as positive x. Releases of these codes are noise.
+        if (input::RAWKEY_NM_WHEEL_UP..=input::RAWKEY_NM_BUTTON_FOURTH).contains(&down_code) {
+            let lines = match down_code {
+                input::RAWKEY_NM_WHEEL_UP => Point { x: 0.0, y: 1.0 },
+                input::RAWKEY_NM_WHEEL_DOWN => Point { x: 0.0, y: -1.0 },
+                input::RAWKEY_NM_WHEEL_LEFT => Point { x: 1.0, y: 0.0 },
+                input::RAWKEY_NM_WHEEL_RIGHT => Point { x: -1.0, y: 0.0 },
+                _ => return, // fourth button etc. — not a wheel, not a key
+            };
+            if !is_up {
+                self.fire_input(PlatformInput::Scroll(ScrollEvent {
+                    position,
+                    delta: ScrollDelta::Lines(lines),
+                    modifiers,
+                    touch_phase: TouchPhase::Moved,
+                    source: ScrollSource::Pointer,
+                }));
+            }
+            return;
+        }
+
+        // The modifier keys themselves only feed the state above.
+        if (input::RAWKEY_MODIFIER_FIRST..=input::RAWKEY_MODIFIER_LAST).contains(&down_code) {
+            return;
+        }
+
+        let key = key_name(down_code, &event.base_chars);
+        // GPUI_AROS_KEYLOG=1: every raw key as the backend sees it, to tell
+        // a key that never arrives from one GPUI does not bind.
+        static KEYLOG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if *KEYLOG.get_or_init(|| std::env::var_os("GPUI_AROS_KEYLOG").is_some_and(|v| !v.is_empty())) {
+            log::info!(
+                "gpui_aros key: code={:#04x} up={} qual={:#06x} chars={:?} base={:?} name={:?} ctrl={} alt={} shift={} cmd={}",
+                down_code,
+                is_up,
+                qualifier,
+                latin1_to_string(&event.chars),
+                latin1_to_string(&event.base_chars),
+                key,
+                modifiers.control,
+                modifiers.alt,
+                modifiers.shift,
+                modifiers.platform,
+            );
+        }
+        let Some(key) = key else {
+            // Unmapped code (or a dead key waiting for its successor) —
+            // nothing sensible to report.
+            return;
+        };
+
+        // The typed characters, when they're actual text: control/platform
+        // chords produce control bytes (Ctrl-A = 0x01) or shortcuts, not
+        // input — same suppression the other backends apply.
+        let key_char = if modifiers.control || modifiers.platform {
+            None
+        } else {
+            latin1_to_string(&event.chars).filter(|s| !s.chars().any(char::is_control))
+        };
+
+        let keystroke = Keystroke {
+            modifiers,
+            key,
+            key_char: key_char.clone(),
+        };
+        if is_up {
+            self.fire_input(PlatformInput::KeyUp(KeyUpEvent { keystroke }));
+        } else {
+            self.fire_input(PlatformInput::KeyDown(KeyDownEvent {
+                keystroke,
+                is_held: qualifier & input::IEQUALIFIER_REPEAT != 0,
+                prefer_character_input: false,
+            }));
+            // A printable character is text for whatever input is focused.
+            // This runs REGARDLESS of whether the KeyDown propagated: a
+            // focused text input consumes the KeyDown for its own bindings
+            // (so propagate is false), while text insertion is a separate
+            // IME-path concern — exactly the macOS split where insertText
+            // fires independently of the key event. `dispatch_text_input`
+            // no-ops when nothing is focused, so a stray character with no
+            // input handler is harmless. key_char is already None for
+            // control/platform chords, so commands are never mis-inserted.
+            if let Some(text) = key_char {
+                self.dispatch_text_input(&text);
+            }
+        }
+    }
+
+    /// Set one of the glue's shared pointerclass pointers (0 = default).
+    pub(crate) fn set_pointer(&self, style: c_int) {
+        let handle = self.state.borrow().handle;
+        if handle.is_null() {
+            return;
+        }
+        // SAFETY: valid handle; the glue owns the pointer objects.
+        unsafe { glue::gpa_set_pointer(handle, style) };
+    }
+
+    fn set_mouse_position(&self, x: c_int, y: c_int) -> Point<Pixels> {
+        let position = Point {
+            x: px(x as f32),
+            y: px(y as f32),
+        };
+        self.state.borrow_mut().mouse_position = position;
+        position
+    }
+
+    /// Fire a platform input event into gpui; returns whether the event
+    /// propagated (true = no handler/keybinding consumed it).
+    fn fire_input(&self, input: PlatformInput) -> bool {
+        let taken = self.callbacks.borrow_mut().input.take();
+        if let Some(mut f) = taken {
+            let result = f(input);
+            self.callbacks.borrow_mut().input = Some(f);
+            result.propagate
+        } else {
+            true
+        }
+    }
+
+    /// Route a printable character into the focused text input. gpui's
+    /// normal KeyDown path runs keybindings but never inserts key_char text
+    /// — on macOS that comes from a SEPARATE NSTextInputClient callback, so
+    /// a backend without native IME must drive it itself (the mac backend's
+    /// insertText does the same `replace_text_in_range`). Without this,
+    /// gpui-component inputs (rename field, filter box, New Folder dialog)
+    /// silently swallowed every keystroke on AROS. The handler carries its
+    /// own async window context, so no Window/App reference is needed here.
+    /// No-ops when nothing is focused (handler absent).
+    fn dispatch_text_input(&self, text: &str) {
+        let handler = self.state.borrow_mut().input_handler.take();
+        if let Some(mut h) = handler {
+            h.replace_text_in_range(None, text);
+            self.state.borrow_mut().input_handler = Some(h);
+        }
+    }
+
+    fn handle_resize(&self) {
+        let handle = self.state.borrow().handle;
+        let (mut w, mut h) = (0i32, 0i32);
+        // SAFETY: valid handle; writes both out-params.
+        unsafe { glue::gpa_inner_size(handle, &mut w, &mut h) };
+        let (w, h) = (w.max(1), h.max(1));
+        let size = Size {
+            width: px(w as f32),
+            height: px(h as f32),
+        };
+        {
+            let mut state = self.state.borrow_mut();
+            state.bounds.size = size;
+            state.renderer.update_drawable_size(device_size(w, h));
+        }
+        let taken = self.callbacks.borrow_mut().resize.take();
+        if let Some(mut f) = taken {
+            // The same factor `scale_factor()` returns.
+            f(size, SCALE_FACTOR);
+            self.callbacks.borrow_mut().resize = Some(f);
+        }
+    }
+
+    /// Intuition activated or deactivated this window.
+    fn handle_activate(&self, active: bool) {
+        self.state.borrow_mut().is_active = active;
+        if active {
+            self.active_window.set(Some(self.handle));
+        } else if self.active_window.get() == Some(self.handle) {
+            self.active_window.set(None);
+        }
+        let taken = self.callbacks.borrow_mut().active_status_change.take();
+        if let Some(mut f) = taken {
+            f(active);
+            self.callbacks.borrow_mut().active_status_change = Some(f);
+        }
+    }
+
+    fn handle_close(&self) {
+        // Ask GPUI whether to close (default: yes).
+        let should_close = {
+            let taken = self.callbacks.borrow_mut().should_close.take();
+            if let Some(mut f) = taken {
+                let result = f();
+                self.callbacks.borrow_mut().should_close = Some(f);
+                result
+            } else {
+                true
+            }
+        };
+        if !should_close {
+            return;
+        }
+        self.state.borrow_mut().closed = true;
+        if self.active_window.get() == Some(self.handle) {
+            self.active_window.set(None);
+        }
+        let close = self.callbacks.borrow_mut().close.take();
+        if let Some(f) = close {
+            f();
+        }
+    }
+}
+
+/// Device pixels per logical point. The window interior is the drawable.
+const SCALE_FACTOR: f32 = 1.0;
+
+/// Drawable (pixmap) size for a window inner size.
+fn device_size(inner_w: i32, inner_h: i32) -> Size<DevicePixels> {
+    Size {
+        width: DevicePixels(inner_w.max(1)),
+        height: DevicePixels(inner_h.max(1)),
+    }
+}
+
+fn map_button(code: c_int) -> MouseButton {
+    match code {
+        glue::GPA_BUTTON_RIGHT => MouseButton::Right,
+        glue::GPA_BUTTON_MIDDLE => MouseButton::Middle,
+        glue::GPA_BUTTON_LEFT | _ => MouseButton::Left,
+    }
+}
+
+impl HasWindowHandle for ArosWindow {
+    fn window_handle(&self) -> Result<WindowHandle<'_>, HandleError> {
+        Err(HandleError::Unavailable)
+    }
+}
+
+impl HasDisplayHandle for ArosWindow {
+    fn display_handle(&self) -> Result<DisplayHandle<'_>, HandleError> {
+        Err(HandleError::Unavailable)
+    }
+}
+
+impl PlatformWindow for ArosWindow {
+    fn bounds(&self) -> Bounds<Pixels> {
+        self.inner.state.borrow().bounds
+    }
+
+    fn is_maximized(&self) -> bool {
+        false
+    }
+
+    fn window_bounds(&self) -> WindowBounds {
+        WindowBounds::Windowed(self.bounds())
+    }
+
+    fn content_size(&self) -> Size<Pixels> {
+        self.inner.state.borrow().bounds.size
+    }
+
+    fn resize(&mut self, size: Size<Pixels>) {
+        let handle = self.inner.state.borrow().handle;
+        let w = f32::from(size.width).max(1.0) as c_int;
+        let h = f32::from(size.height).max(1.0) as c_int;
+        // SAFETY: valid handle. ChangeWindowBox is asynchronous; the
+        // NEWSIZE event drives the renderer/GPUI resize path.
+        unsafe { glue::gpa_set_size(handle, w, h) };
+    }
+
+    fn scale_factor(&self) -> f32 {
+        SCALE_FACTOR
+    }
+
+    fn appearance(&self) -> WindowAppearance {
+        WindowAppearance::Light
+    }
+
+    fn display(&self) -> Option<Rc<dyn PlatformDisplay>> {
+        Some(self.inner.display.clone())
+    }
+
+    fn mouse_position(&self) -> Point<Pixels> {
+        self.inner.state.borrow().mouse_position
+    }
+
+    fn modifiers(&self) -> Modifiers {
+        self.inner.state.borrow().modifiers
+    }
+
+    fn capslock(&self) -> Capslock {
+        self.inner.state.borrow().capslock
+    }
+
+    fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
+        self.inner.state.borrow_mut().input_handler = Some(input_handler);
+    }
+
+    fn take_input_handler(&mut self) -> Option<PlatformInputHandler> {
+        self.inner.state.borrow_mut().input_handler.take()
+    }
+
+    fn prompt(
+        &self,
+        _level: PromptLevel,
+        _msg: &str,
+        _detail: Option<&str>,
+        _answers: &[PromptButton],
+    ) -> Option<futures::channel::oneshot::Receiver<usize>> {
+        None
+    }
+
+    fn activate(&self) {
+        let handle = self.inner.state.borrow().handle;
+        if !handle.is_null() {
+            // SAFETY: valid handle; Intuition answers with ACTIVEWINDOW.
+            unsafe { glue::gpa_activate_window(handle) };
+        }
+        self.inner.state.borrow_mut().is_active = true;
+        self.inner.active_window.set(Some(self.inner.handle));
+    }
+
+    fn is_active(&self) -> bool {
+        self.inner.state.borrow().is_active
+    }
+
+    fn is_hovered(&self) -> bool {
+        self.inner.state.borrow().is_hovered
+    }
+
+    fn background_appearance(&self) -> WindowBackgroundAppearance {
+        WindowBackgroundAppearance::Opaque
+    }
+
+    fn set_title(&mut self, title: &str) {
+        let handle = self.inner.state.borrow().handle;
+        // Intuition reads a title as Latin-1, so UTF-8 has to be folded first:
+        // the em-dash Zed puts between project and filename is three bytes,
+        // and arrived in the title bar as three stray glyphs.
+        if let Ok(c_title) = CString::new(crate::input::to_latin1_lossy(title)) {
+            // SAFETY: valid handle; glue copies the string.
+            unsafe { glue::gpa_set_title(handle, c_title.as_ptr()) };
+        }
+        self.inner.state.borrow_mut().title = title.to_owned();
+    }
+
+    fn set_background_appearance(&self, _background_appearance: WindowBackgroundAppearance) {}
+
+    fn minimize(&self) {}
+
+    fn zoom(&self) {}
+
+    fn toggle_fullscreen(&self) {}
+
+    fn is_fullscreen(&self) -> bool {
+        false
+    }
+
+    fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>) {
+        self.inner.callbacks.borrow_mut().request_frame = Some(callback);
+    }
+
+    fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> DispatchEventResult>) {
+        self.inner.callbacks.borrow_mut().input = Some(callback);
+    }
+
+    fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
+        self.inner.callbacks.borrow_mut().active_status_change = Some(callback);
+    }
+
+    fn on_hover_status_change(&self, callback: Box<dyn FnMut(bool)>) {
+        self.inner.callbacks.borrow_mut().hover_status_change = Some(callback);
+    }
+
+    fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {
+        self.inner.callbacks.borrow_mut().resize = Some(callback);
+    }
+
+    fn on_moved(&self, callback: Box<dyn FnMut()>) {
+        self.inner.callbacks.borrow_mut().moved = Some(callback);
+    }
+
+    /// An Intuition window lives on the screen it was opened on and never
+    /// moves to another one, so there is nothing to report.
+    fn on_display_changed(&self, _callback: Box<dyn FnMut()>) {}
+
+    fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>) {
+        self.inner.callbacks.borrow_mut().should_close = Some(callback);
+    }
+
+    fn on_hit_test_window_control(&self, callback: Box<dyn FnMut() -> Option<WindowControlArea>>) {
+        self.inner.callbacks.borrow_mut().hit_test_window_control = Some(callback);
+    }
+
+    fn on_close(&self, callback: Box<dyn FnOnce()>) {
+        self.inner.callbacks.borrow_mut().close = Some(callback);
+    }
+
+    /// An open Intuition window is presented; Intuition reports no
+    /// obscured or iconified state for it, so it is `Hidden` only once closed.
+    fn visibility(&self) -> WindowVisibility {
+        if self.inner.state.borrow().closed {
+            WindowVisibility::Hidden
+        } else {
+            WindowVisibility::Visible
+        }
+    }
+
+    fn on_visibility_change(&self, callback: Box<dyn FnMut(WindowVisibility)>) {
+        self.inner.callbacks.borrow_mut().visibility_change = Some(callback);
+    }
+
+    fn on_appearance_changed(&self, callback: Box<dyn FnMut()>) {
+        self.inner.callbacks.borrow_mut().appearance_changed = Some(callback);
+    }
+
+    fn draw(&self, scene: &Scene) {
+        let mut state = self.inner.state.borrow_mut();
+        if state.closed {
+            return;
+        }
+        // Dirty-rect repaint: the renderer diffs the scene against the
+        // previous frame and rasterizes only the damaged region; None means
+        // an identical frame — no raster, no blit.
+        let raster_started = Instant::now();
+        let Some(damage) = state.renderer.draw(scene) else {
+            crate::stats::skipped();
+            return;
+        };
+        let raster = raster_started.elapsed();
+        let dev_w = state.renderer.width() as i32;
+        let stride = dev_w * 4;
+        let handle = state.handle;
+        let data = state.renderer.framebuffer();
+
+        let blit_started = Instant::now();
+        // SAFETY: valid handle; data is the full framebuffer, and the glue
+        // blits the (x, y, w, h) subrect out of it (same stride).
+        unsafe {
+            glue::gpa_blit(
+                handle,
+                data.as_ptr() as *const c_void,
+                stride,
+                damage.x0,
+                damage.y0,
+                damage.x1 - damage.x0,
+                damage.y1 - damage.y0,
+            );
+        }
+        crate::stats::painted(raster, blit_started.elapsed(), damage);
+    }
+
+    fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
+        self.inner.atlas.clone()
+    }
+
+    fn is_subpixel_rendering_supported(&self) -> bool {
+        false
+    }
+
+    fn gpu_specs(&self) -> Option<GpuSpecs> {
+        Some(GpuSpecs {
+            is_software_emulated: true,
+            device_name: "AROS CPU".to_owned(),
+            driver_name: "tiny-skia".to_owned(),
+            driver_info: String::new(),
+        })
+    }
+
+    fn update_ime_position(&self, _bounds: Bounds<Pixels>) {}
+}
