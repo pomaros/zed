@@ -103,8 +103,10 @@ pub fn set_user_info(_crash_client: &Arc<Client>, _info: UserInfo) {}
 
 pub fn set_tag(_crash_client: &Arc<Client>, _key: impl Into<String>, _value: Option<String>) {}
 
-pub fn set_tags<K>(_crash_client: &Arc<Client>, _tags: impl IntoIterator<Item = (K, Option<String>)>)
-where
+pub fn set_tags<K>(
+    _crash_client: &Arc<Client>,
+    _tags: impl IntoIterator<Item = (K, Option<String>)>,
+) where
     K: Into<String>,
 {
 }
