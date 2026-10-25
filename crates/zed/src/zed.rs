@@ -2412,50 +2412,63 @@ pub fn load_default_keymap(cx: &mut App) {
         return;
     }
 
-    // On AROS several subsystems are not built (agent, extensions, collab, the
-    // settings editor), so the bundled keymaps reference actions that do not
-    // exist there. Bind what resolves instead of treating the rest as fatal.
+    cx.bind_keys(filter_disabled_ai_bindings(
+        load_bundled_keymap(DEFAULT_KEYMAP_PATH, Some(KeybindSource::Default), cx),
+        cx,
+    ));
+
+    if let Some(asset_path) = base_keymap.asset_path() {
+        cx.bind_keys(filter_disabled_ai_bindings(
+            load_bundled_keymap(asset_path, Some(KeybindSource::Base), cx),
+            cx,
+        ));
+    }
+
+    if VimModeSetting::get_global(cx).0 || vim_mode_setting::HelixModeSetting::get_global(cx).0 {
+        cx.bind_keys(filter_disabled_ai_bindings(
+            load_bundled_keymap(VIM_KEYMAP_PATH, Some(KeybindSource::Vim), cx),
+            cx,
+        ));
+    }
+
+    cx.bind_keys(load_bundled_keymap(
+        SPECIFIC_OVERRIDES_KEYMAP_PATH,
+        Some(KeybindSource::Default),
+        cx,
+    ));
+
     // aros.json comes last: it adds bindings on keys that stay put whatever
     // the keyboard layout, for defaults that sit on keys which do not.
     #[cfg(target_os = "aros")]
-    for path in [DEFAULT_KEYMAP_PATH, VIM_KEYMAP_PATH, "keymaps/aros.json"] {
-        match KeymapFile::load_asset_allow_partial_failure(path, cx) {
-            Ok(bindings) => cx.bind_keys(filter_disabled_ai_bindings(bindings, cx)),
-            Err(error) => log::error!("Failed to load keymap {path}: {error}"),
-        }
-    }
+    cx.bind_keys(load_bundled_keymap(
+        "keymaps/aros.json",
+        Some(KeybindSource::Default),
+        cx,
+    ));
+}
 
-    #[cfg(not(target_os = "aros"))]
+/// Loads a keymap bundled with Zed. Several subsystems are not built on AROS
+/// (agent, extensions, collab, the settings editor), so the bundled keymaps
+/// name actions that do not exist there: bind the ones that resolve.
+fn load_bundled_keymap(
+    asset_path: &str,
+    source: Option<KeybindSource>,
+    cx: &App,
+) -> Vec<KeyBinding> {
+    #[cfg(target_os = "aros")]
     {
-        cx.bind_keys(filter_disabled_ai_bindings(
-            KeymapFile::load_asset(DEFAULT_KEYMAP_PATH, Some(KeybindSource::Default), cx).unwrap(),
-            cx,
-        ));
-
-        if let Some(asset_path) = base_keymap.asset_path() {
-            cx.bind_keys(filter_disabled_ai_bindings(
-                KeymapFile::load_asset(asset_path, Some(KeybindSource::Base), cx).unwrap(),
-                cx,
-            ));
+        let mut key_bindings = KeymapFile::load_asset_allow_partial_failure(asset_path, cx)
+            .log_err()
+            .unwrap_or_default();
+        if let Some(source) = source {
+            for key_binding in &mut key_bindings {
+                key_binding.set_meta(source.meta());
+            }
         }
-
-        if VimModeSetting::get_global(cx).0 || vim_mode_setting::HelixModeSetting::get_global(cx).0
-        {
-            cx.bind_keys(filter_disabled_ai_bindings(
-                KeymapFile::load_asset(VIM_KEYMAP_PATH, Some(KeybindSource::Vim), cx).unwrap(),
-                cx,
-            ));
-        }
-
-        cx.bind_keys(
-            KeymapFile::load_asset(
-                SPECIFIC_OVERRIDES_KEYMAP_PATH,
-                Some(KeybindSource::Default),
-                cx,
-            )
-            .unwrap(),
-        );
+        key_bindings
     }
+    #[cfg(not(target_os = "aros"))]
+    KeymapFile::load_asset(asset_path, source, cx).unwrap()
 }
 
 /// Namespaces of actions that are part of an AI feature. When the user opts out
