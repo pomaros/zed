@@ -1436,6 +1436,7 @@ dependencies = [
  "gpui",
  "markdown_preview",
  "project",
+ "prompt_store",
  "release_channel",
  "semver",
  "serde",
@@ -7539,6 +7540,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "gpui_aros"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cc",
+ "collections",
+ "crossbeam-channel",
+ "etagere",
+ "futures 0.3.34",
+ "gpui",
+ "gpui_wgpu",
+ "log",
+ "parking_lot",
+ "raw-window-handle",
+ "smallvec",
+ "tiny-skia",
+ "uuid",
+]
+
+[[package]]
 name = "gpui_ios"
 version = "0.1.0"
 dependencies = [
@@ -7662,6 +7683,7 @@ dependencies = [
  "console_error_panic_hook",
  "criterion",
  "gpui",
+ "gpui_aros",
  "gpui_ios",
  "gpui_linux",
  "gpui_macos",
@@ -10421,6 +10443,7 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
+ "smol",
  "util",
  "zlog",
 ]
@@ -22553,6 +22576,7 @@ dependencies = [
  "breadcrumbs",
  "call",
  "call_hierarchy",
+ "cc",
  "channel",
  "chrono",
  "clap",
@@ -22651,6 +22675,7 @@ dependencies = [
  "repl",
  "reqwest_client",
  "rope",
+ "rust-embed",
  "sandbox",
  "search",
  "semver",

@@ -1,0 +1,58 @@
+# Source overrides for the AROS build of Zed, read by script/aros-cargo.py.
+#
+# Not a `.cargo/config.toml`: `[patch]` is global to a build, and these must
+# reach only the AROS target. The wrapper resolves each entry by its file name
+# inside the native crate store (AROS_CRATE_STORE): the crates.io release of
+# that exact version plus its AROS diff, materialized by `crates/store.py` of
+# https://github.com/pomaros/rust-aros. The same store and the same pins serve
+# Ferail, so both applications build on one set of native ports. A crate gets
+# a diff only to put AROS in its platform lists or to choose a backend POSIX
+# cannot express; anything missing from the C library is added to the AROS
+# SDK instead.
+#
+# Every entry overrides a crates.io package with the *same version* the build
+# resolves; the wrapper re-pins Cargo.lock to these versions first, because
+# cargo silently drops a patch whose version no longer matches.
+
+[patch.crates-io]
+# getrandom's getentropy() backend for its three generations.
+getrandom = { path = "getrandom-0.4.3" }
+getrandom03 = { package = "getrandom", path = "getrandom-0.3.4" }
+getrandom02 = { package = "getrandom", path = "getrandom-0.2.17" }
+# parking_lot parks on the native condition variable instead of spinning.
+parking_lot_core = { path = "parking_lot_core-0.9.12" }
+# memmap2 reports file mapping as unsupported (AROS maps no files); ctor and
+# inventory put life-before-main constructors in `.init_array`, which the AROS
+# linker gathers and the program runs at startup; backtrace takes its no-op
+# frame walk (AROS links no unwinder).
+memmap2 = { path = "memmap2-0.9.10" }
+ctor = { path = "ctor-1.0.12" }
+inventory = { path = "inventory-0.3.24" }
+backtrace = { path = "backtrace-0.3.76" }
+# The native system services: rustix and errno on the AROS C library, mio's
+# readiness on the native poll, tempfile without unlink-while-open (an open
+# AROS file cannot be deleted).
+rustix = { path = "rustix-1.1.4" }
+errno = { path = "errno-0.3.14" }
+mio = { path = "mio-1.2.1" }
+tempfile = { path = "tempfile-3.27.0" }
+# socket2 puts AROS with the systems whose msg_iovlen is an int; stacker
+# reads the stack limit from the exec task and enters a new stack through
+# NewStackSwap(), since the kernel stops a task whose stack pointer leaves it.
+socket2 = { path = "socket2-0.6.5" }
+stacker = { path = "stacker-0.1.25" }
+# tokio reports Unix-domain peer credentials as unsupported (the AROS stack
+# has no Unix-domain sockets) instead of inventing root's.
+tokio = { path = "tokio-1.52.1" }
+# ring builds its ELF AArch64 assembly and draws randomness through getrandom.
+ring = { path = "ring-0.17.14" }
+# url maps DOS paths to file URLs and back, volume included:
+# "RAM:dir/f.rs" is "file:///RAM%3Adir/f.rs".
+url = { path = "url-2.5.7" }
+# SQLite: DOS absolute names ("HOME:Data/x") are full paths as given.
+libsqlite3-sys = { path = "libsqlite3-sys-0.30.1" }
+
+[patch."https://github.com/zed-industries/alacritty"]
+# The terminal library at Zed's revision, standalone, with child process ids
+# converted to pid_t (a task pointer on AROS) rather than to i32.
+alacritty_terminal = { path = "alacritty_terminal-4c129667ce56" }

@@ -1,0 +1,80 @@
+#!/usr/bin/env python3
+"""Copy the AROS GPUI backend from a pomaros/gpui-aros revision into crates/gpui_aros.
+
+    script/sync-gpui-aros GPUI_AROS_CHECKOUT [--check]
+
+pomaros/gpui-aros is the source of truth for the backend. Every file of its
+crates/gpui_aros is copied verbatim except Cargo.toml, which this tree keeps
+because Zed builds the backend against its in-tree gpui instead of the
+gpui-pre snapshots. The revision is recorded in crates/gpui_aros/UPSTREAM.
+
+Before copying, the script refuses to overwrite local edits: every synced file
+must still match the recorded revision. Fix the backend in gpui-aros, then
+sync. --check only verifies that the tree matches the recorded revision.
+"""
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+DEST = ROOT / "crates/gpui_aros"
+KEPT = {"Cargo.toml", "UPSTREAM"}
+
+
+def git(checkout, *args):
+    return subprocess.run(["git", "-C", str(checkout), *args], check=True, capture_output=True).stdout
+
+
+def tracked(checkout, rev):
+    out = git(checkout, "ls-tree", "-r", "--name-only", rev, "crates/gpui_aros").decode().splitlines()
+    return {path[len("crates/gpui_aros/"):]: path for path in out}
+
+
+def mismatches(checkout, rev):
+    files = tracked(checkout, rev)
+    bad = []
+    for rel, path in files.items():
+        if rel in KEPT:
+            continue
+        local = DEST / rel
+        if not local.is_file() or local.read_bytes() != git(checkout, "show", f"{rev}:{path}"):
+            bad.append(rel)
+    for local in DEST.rglob("*"):
+        rel = local.relative_to(DEST).as_posix()
+        if local.is_file() and rel not in files and rel not in KEPT:
+            bad.append(rel)
+    return files, sorted(bad)
+
+
+def main():
+    if len(sys.argv) < 2:
+        raise SystemExit(__doc__)
+    checkout = Path(sys.argv[1]).resolve()
+    record = DEST / "UPSTREAM"
+    if record.is_file():
+        _, bad = mismatches(checkout, record.read_text().split()[0])
+        if bad:
+            raise SystemExit("local edits in crates/gpui_aros (move them to gpui-aros first):\n  " + "\n  ".join(bad))
+    if "--check" in sys.argv:
+        print("crates/gpui_aros matches", record.read_text().strip())
+        return
+    rev = git(checkout, "rev-parse", "HEAD").decode().strip()
+    files = tracked(checkout, rev)
+    for local in sorted(DEST.rglob("*"), reverse=True):
+        rel = local.relative_to(DEST).as_posix()
+        if local.is_file() and rel not in KEPT:
+            local.unlink()
+        elif local.is_dir() and not any(local.iterdir()):
+            local.rmdir()
+    for rel, path in files.items():
+        if rel in KEPT:
+            continue
+        target = DEST / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(git(checkout, "show", f"{rev}:{path}"))
+    record.write_text(rev + " https://github.com/pomaros/gpui-aros\n")
+    print("synced crates/gpui_aros from", rev)
+
+
+if __name__ == "__main__":
+    main()
