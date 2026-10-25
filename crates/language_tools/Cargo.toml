@@ -32,7 +32,7 @@ serde_json.workspace = true
 settings.workspace = true
 telemetry.workspace = true
 theme.workspace = true
-tree-sitter = { workspace = true, features = ["wasm"] }
+tree-sitter = { workspace = true }
 sysinfo.workspace = true
 ui.workspace = true
 util.workspace = true
@@ -47,3 +47,8 @@ semver.workspace = true
 util = { workspace = true, features = ["test-support"] }
 zlog.workspace = true
 theme_settings.workspace = true
+
+# tree-sitter's wasm grammars run on wasmtime, which needs file mapping and
+# trap signals that AROS does not have; there the native grammars only.
+[target.'cfg(not(target_os = "aros"))'.dependencies]
+tree-sitter = { workspace = true, features = ["wasm"] }

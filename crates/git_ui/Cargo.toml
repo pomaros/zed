@@ -46,7 +46,6 @@ multi_buffer.workspace = true
 notifications.workspace = true
 picker.workspace = true
 project.workspace = true
-prompt_store.workspace = true
 rand.workspace = true
 release_channel.workspace = true
 remote_connection.workspace = true
@@ -97,3 +96,7 @@ zlog.workspace = true
 
 [package.metadata.cargo-shear]
 ignored = ["component", "remote_connection", "tracing"]
+
+# prompt_store pulls heed/LMDB, which is memory-mapped and cannot build for AROS.
+[target.'cfg(not(target_os = "aros"))'.dependencies]
+prompt_store.workspace = true

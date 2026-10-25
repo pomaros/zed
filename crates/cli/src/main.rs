@@ -482,7 +482,7 @@ fn main() {
 }
 
 fn run() -> Result<()> {
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_os = "aros")))]
     util::prevent_root_execution();
 
     // Exit flatpak sandbox if needed

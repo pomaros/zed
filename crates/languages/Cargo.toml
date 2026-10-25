@@ -62,7 +62,7 @@ snippet.workspace = true
 task.workspace = true
 terminal.workspace = true
 theme.workspace = true
-tree-sitter = { workspace = true, optional = true , features = ["wasm"] }
+tree-sitter = { workspace = true, optional = true }
 tree-sitter-gitcommit = { workspace = true, optional = true }
 url.workspace = true
 util.workspace = true
@@ -84,3 +84,8 @@ tree-sitter-rust.workspace = true
 tree-sitter-typescript.workspace = true
 tree-sitter = { workspace = true, features = ["wasm"] }
 unindent.workspace = true
+
+# tree-sitter's wasm grammars run on wasmtime, which needs file mapping and
+# trap signals that AROS does not have; there the native grammars only.
+[target.'cfg(not(target_os = "aros"))'.dependencies]
+tree-sitter = { workspace = true, optional = true , features = ["wasm"] }

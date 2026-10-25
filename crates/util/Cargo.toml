@@ -54,10 +54,13 @@ dirs.workspace = true
 log.workspace = true
 
 [target.'cfg(unix)'.dependencies]
-command-fds = "0.3.1"
 libc.workspace = true
-nix = { workspace = true, features = ["resource", "user"] }
 tempfile.workspace = true
+
+# command-fds and nix have no AROS arm; the code using them is unix-but-not-AROS.
+[target.'cfg(all(unix, not(target_os = "aros")))'.dependencies]
+command-fds = "0.3.1"
+nix = { workspace = true, features = ["resource", "user"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 mach2.workspace = true

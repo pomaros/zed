@@ -17,7 +17,6 @@ doctest = false
 test-support = []
 
 [dependencies]
-extension_host.workspace = true
 gpui.workspace = true
 system_specs.workspace = true
 urlencoding.workspace = true
@@ -25,3 +24,7 @@ util.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
 client.workspace = true
+
+# extension_host pulls the wasm runtime (wasmtime), which AROS cannot host.
+[target.'cfg(not(target_os = "aros"))'.dependencies]
+extension_host.workspace = true

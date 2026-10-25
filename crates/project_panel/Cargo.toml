@@ -51,6 +51,13 @@ fs.workspace = true
 log.workspace = true
 svg_preview.workspace = true
 
+# git_ui pulls the agent/prompt_store -> heed -> LMDB chain (LMDB needs POSIX
+# calls AROS lacks), and only backs the file-diff view + file-history graph in
+# the panel. Make it non-AROS-only; the panel's git integration is cfg-gated off
+# on AROS. Non-AROS builds are unchanged.
+[target.'cfg(not(target_os = "aros"))'.dependencies]
+git_ui.workspace = true
+
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }
 criterion.workspace = true

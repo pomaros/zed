@@ -73,7 +73,7 @@ tree-sitter-md = { workspace = true, optional = true }
 tree-sitter-python = { workspace = true, optional = true }
 tree-sitter-rust = { workspace = true, optional = true }
 tree-sitter-typescript = { workspace = true, optional = true }
-tree-sitter = { workspace = true, features = ["wasm"] }
+tree-sitter = { workspace = true }
 unicase.workspace = true
 util.workspace = true
 watch.workspace = true
@@ -116,3 +116,8 @@ harness = false
 
 [package.metadata.cargo-shear]
 ignored = ["tracing"]
+
+# tree-sitter's wasm grammars run on wasmtime, which needs file mapping and
+# trap signals that AROS does not have; there the native grammars only.
+[target.'cfg(not(target_os = "aros"))'.dependencies]
+tree-sitter = { workspace = true, features = ["wasm"] }

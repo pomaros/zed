@@ -71,8 +71,10 @@ use project::{
     },
     project_settings::{GitPathStyle, ProjectSettings},
 };
+#[cfg(not(target_os = "aros"))]
 use prompt_store::RULES_FILE_NAMES;
-
+#[cfg(target_os = "aros")]
+const RULES_FILE_NAMES: [&str; 0] = [];
 use serde::{Deserialize, Serialize};
 use settings::{
     GitPanelClickBehavior, GitPanelCommitEditor, GitPanelGroupBy, GitPanelSortBy, Settings,

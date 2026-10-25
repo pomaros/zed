@@ -1,3 +1,11 @@
+// AROS has no minidump/IPC crash-reporting stack; see aros.rs.
+#[cfg(target_os = "aros")]
+mod aros;
+#[cfg(target_os = "aros")]
+pub use aros::*;
+
+#[cfg(not(target_os = "aros"))]
+mod real {
 use crash_handler::{CrashEventResult, CrashHandler};
 use log::info;
 use minidumper::{LoopAction, MinidumpBinary, Server, SocketName};
@@ -929,3 +937,6 @@ mod tests {
         }
     }
 }
+}
+#[cfg(not(target_os = "aros"))]
+pub use real::*;
