@@ -155,7 +155,11 @@ impl ToolchainStore {
         language_name: LanguageName,
         cx: &mut Context<Self>,
     ) -> Task<Result<Toolchain>> {
-        debug_assert!(abs_path.is_absolute());
+        debug_assert!(if matches!(&self.mode, ToolchainStoreInner::Local(_)) {
+            util::paths::is_local_absolute(&abs_path)
+        } else {
+            abs_path.is_absolute()
+        });
         match &self.mode {
             ToolchainStoreInner::Local(local) => local.update(cx, |this, cx| {
                 this.resolve_toolchain(abs_path, language_name, cx)

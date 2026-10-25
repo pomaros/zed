@@ -219,7 +219,7 @@ where
 /// This function checks if the current process is running with root privileges
 /// and terminates the program with an error message unless explicitly allowed via the
 /// `ZED_ALLOW_ROOT` environment variable.
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "aros")))]
 pub fn prevent_root_execution() {
     let is_root = nix::unistd::geteuid().is_root();
     let allow_root = std::env::var("ZED_ALLOW_ROOT").is_ok_and(|val| val == "true");
@@ -239,7 +239,7 @@ Error: Running Zed as root or via sudo is unsupported.
 /// Raises the soft limit on open file descriptors without changing the hard limit.
 ///
 /// Call during startup, before spawning children that will inherit the limit.
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "aros")))]
 pub fn increase_open_file_limit() -> Result<()> {
     use anyhow::Context as _;
     use nix::sys::resource::{Resource::RLIMIT_NOFILE, getrlimit, setrlimit};
@@ -266,6 +266,27 @@ pub fn increase_open_file_limit() -> Result<()> {
         requested_limit = soft_limit + (requested_limit - soft_limit) / 2;
     }
 
+    Ok(())
+}
+
+/// Raises the soft limit on open file descriptors without changing the hard limit.
+///
+/// AROS has no nix; the C library answers RLIMIT_NOFILE with its descriptor
+/// table size as both limits, so there is normally nothing to raise.
+#[cfg(target_os = "aros")]
+pub fn increase_open_file_limit() -> Result<()> {
+    use anyhow::Context as _;
+
+    let mut limit = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+    if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) } != 0 {
+        return Err(std::io::Error::last_os_error()).context("getrlimit(RLIMIT_NOFILE)");
+    }
+    if limit.rlim_cur < limit.rlim_max {
+        limit.rlim_cur = limit.rlim_max;
+        if unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &limit) } != 0 {
+            return Err(std::io::Error::last_os_error()).context("setrlimit(RLIMIT_NOFILE)");
+        }
+    }
     Ok(())
 }
 
@@ -389,7 +410,9 @@ pub fn get_zed_cli_path() -> Result<PathBuf> {
         })
 }
 
-#[cfg(unix)]
+// AROS programs inherit the variables of the shell that started them; there
+// is no login shell to run and read back.
+#[cfg(all(unix, not(target_os = "aros")))]
 pub async fn load_login_shell_environment() -> Result<()> {
     use anyhow::Context as _;
 

@@ -1,11 +1,15 @@
 use std::path::Path;
 
-use anyhow::{Context as _, Result};
+#[cfg(not(target_os = "aros"))]
+use anyhow::Context as _;
+use anyhow::Result;
 use collections::HashMap;
 use serde::Deserialize;
 
+#[cfg(not(target_os = "aros"))]
 use crate::shell::ShellKind;
 
+#[cfg(not(target_os = "aros"))]
 fn parse_env_map_from_noisy_output(output: &str) -> Result<collections::HashMap<String, String>> {
     for (position, _) in output.match_indices('{') {
         let candidate = &output[position..];
@@ -34,8 +38,16 @@ pub async fn capture(
 ) -> Result<collections::HashMap<String, String>> {
     #[cfg(windows)]
     return capture_windows(shell_path.as_ref(), args, directory.as_ref()).await;
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_os = "aros")))]
     return capture_unix(shell_path.as_ref(), args, directory.as_ref()).await;
+    #[cfg(target_os = "aros")]
+    {
+        // AROS has no login shell to replay: the process environment (the
+        // ENV: variables the launcher saw) is the whole environment, so hand
+        // it back instead of reporting a failure on every project open.
+        let _ = (shell_path, args, directory);
+        Ok(std::env::vars().collect())
+    }
 }
 
 /// Try to parse the environment output before checking the exit status.
@@ -43,6 +55,7 @@ pub async fn capture(
 /// integrations that call posix_spawnp outside a real PTY), causing a
 /// non-zero exit status even though `zed --printenv` ran successfully and
 /// produced valid output on its separate fd.
+#[cfg(not(target_os = "aros"))]
 fn parse_env_output(
     env_output: &str,
     status: &std::process::ExitStatus,
@@ -71,7 +84,7 @@ fn parse_env_output(
     }
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "aros")))]
 async fn capture_unix(
     shell_path: &Path,
     args: &[String],
@@ -177,7 +190,7 @@ async fn capture_unix(
     )
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "aros")))]
 async fn spawn_and_read_fd(
     mut command: std::process::Command,
     child_fd: std::os::fd::RawFd,
@@ -310,7 +323,7 @@ mod tests {
     use super::*;
     use crate::path;
 
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_os = "aros")))]
     fn exit_status(code: i32) -> ExitStatus {
         use std::os::unix::process::ExitStatusExt;
 

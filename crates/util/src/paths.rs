@@ -36,7 +36,17 @@ pub fn home_dir() -> &'static PathBuf {
                 PathBuf::from("/home/zed")
             }
         } else {
-            dirs::home_dir().expect("failed to determine home directory")
+            // AROS has no `dirs` backend; resolve $HOME directly.
+            #[cfg(target_os = "aros")]
+            {
+                std::env::var_os("HOME")
+                    .map(PathBuf::from)
+                    .expect("failed to determine home directory")
+            }
+            #[cfg(not(target_os = "aros"))]
+            {
+                dirs::home_dir().expect("failed to determine home directory")
+            }
         }
     })
 }
@@ -391,6 +401,23 @@ impl RemotePathBuf {
 impl Display for RemotePathBuf {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.string)
+    }
+}
+
+/// Whether a path is rooted in the local filesystem. AROS volume and assign
+/// prefixes are absolute, while a leading slash means a parent directory.
+pub fn is_local_absolute(path: &Path) -> bool {
+    #[cfg(target_os = "aros")]
+    {
+        path.as_os_str()
+            .as_encoded_bytes()
+            .iter()
+            .take_while(|byte| **byte != b'/')
+            .any(|byte| *byte == b':')
+    }
+    #[cfg(not(target_os = "aros"))]
+    {
+        path.is_absolute()
     }
 }
 
@@ -1403,6 +1430,7 @@ pub trait UrlExt {
 impl UrlExt for url::Url {
     // Copied from `url::Url::to_file_path`, but the `cfg` handling is replaced with runtime branching on `PathStyle`
     fn to_file_path_ext(&self, source_path_style: PathStyle) -> Result<PathBuf, ()> {
+        let computed = (|| -> Result<PathBuf, ()> {
         if let Some(segments) = self.path_segments() {
             let host = match self.host() {
                 None | Some(url::Host::Domain("localhost")) => None,
@@ -1537,6 +1565,9 @@ impl UrlExt for url::Url {
             Ok(path)
         }
         Err(())
+        })();
+        let path = computed?;
+        Ok(path)
     }
 }
 
@@ -1544,6 +1575,29 @@ impl UrlExt for url::Url {
 mod tests {
     use super::*;
     use util_macros::perf;
+
+    #[cfg(target_os = "aros")]
+    #[test]
+    fn native_dos_absolute_paths() {
+        for path in [
+            "RAM:QA/main.rs",
+            "HOME:",
+            ":main.rs",
+            "Work Disk:project/file",
+        ] {
+            assert!(is_local_absolute(Path::new(path)), "{path}");
+        }
+        for path in [
+            "",
+            "main.rs",
+            "QA/main.rs",
+            "/main.rs",
+            "//main.rs",
+            "../RAM:file",
+        ] {
+            assert!(!is_local_absolute(Path::new(path)), "{path}");
+        }
+    }
 
     #[test]
     fn test_lenient_path_matcher() {

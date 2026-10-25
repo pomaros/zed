@@ -64,7 +64,7 @@ pub(crate) async fn watch(
     if let Some(mut target) = fs.read_link(path).await.ok() {
         log::trace!("watch symlink {path:?} -> {target:?}");
         // Check if symlink target is relative path, if so make it absolute
-        if target.is_relative()
+        if !util::paths::is_local_absolute(&target)
             && let Some(parent) = path.parent()
         {
             target = parent.join(target);
@@ -304,7 +304,16 @@ pub fn requires_poll_watcher(path: &Path) -> bool {
         return detect_requires_poll_watcher_linux(path);
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "aros")]
+    {
+        // AROS uses its own filesystem directly. Until a DOS notification
+        // backend is provided, the existing content-aware poll watcher also
+        // observes changes from other native applications.
+        let _ = path;
+        return true;
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "aros")))]
     {
         let _ = path;
         false
@@ -1317,6 +1326,13 @@ impl OsWatcher {
         let mut backend = self.backend.lock();
         if backend.is_none() {
             *backend = Some(match self.kind {
+                // AROS has no native notification backend yet (a DOS
+                // StartNotify one would serve); the poll watcher covers it.
+                #[cfg(target_os = "aros")]
+                OsWatcherKind::Native => {
+                    anyhow::bail!("native filesystem notifications are unavailable; use poll mode")
+                }
+                #[cfg(not(target_os = "aros"))]
                 OsWatcherKind::Native => {
                     // CORE excludes Access events, which Zed discards anyway. Without this,
                     // the default mask subscribes to inotify OPEN/CLOSE_* on Linux, so every

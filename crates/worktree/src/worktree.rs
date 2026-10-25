@@ -7184,7 +7184,7 @@ fn parse_gitfile(content: &str) -> anyhow::Result<&Path> {
 }
 
 fn resolve_gitfile_path(dot_git_abs_path: &Path, gitfile_path: &Path) -> PathBuf {
-    if gitfile_path.is_absolute() {
+    if util::paths::is_local_absolute(gitfile_path) {
         gitfile_path.into()
     } else {
         dot_git_abs_path
@@ -7196,7 +7196,7 @@ fn resolve_gitfile_path(dot_git_abs_path: &Path, gitfile_path: &Path) -> PathBuf
 
 fn resolve_commondir_path(repository_dir_abs_path: &Path, commondir_path: &str) -> PathBuf {
     let commondir_path = Path::new(commondir_path.trim());
-    if commondir_path.is_absolute() {
+    if util::paths::is_local_absolute(commondir_path) {
         commondir_path.into()
     } else {
         repository_dir_abs_path.join(commondir_path)

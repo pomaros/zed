@@ -50,6 +50,9 @@ impl PrefixExt for Prefix<'_> {
             }
             DeviceNS(x) => 4 + os_str_len(x),
             Disk(_) => 2,
+            // An AROS volume or assign, `Name:`, which std parses as a prefix.
+            #[cfg(target_os = "aros")]
+            ArosVolume(x) => os_str_len(x) + 1,
         }
     }
 
