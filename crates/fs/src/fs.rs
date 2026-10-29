@@ -953,6 +953,18 @@ impl Fs for RealFs {
         Ok(Box::new(std::fs::File::open(path)?))
     }
 
+    #[cfg(target_os = "aros")]
+    async fn open_handle(&self, _path: &Path) -> Result<Arc<dyn FileHandle>> {
+        // Root handles only recover paths after relocation, which this port
+        // cannot do. Retaining a read handle anyway prevents FAT file updates.
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "recovering a file path from its handle is not supported on AROS",
+        )
+        .into())
+    }
+
+    #[cfg(not(target_os = "aros"))]
     async fn open_handle(&self, path: &Path) -> Result<Arc<dyn FileHandle>> {
         let mut options = std::fs::OpenOptions::new();
         options.read(true);
