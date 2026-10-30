@@ -14,10 +14,14 @@ open a file, select and edit its contents, save, read back the actual bytes from
 the guest filesystem, capture the editor window, and shut down the VM cleanly.
 The verified application code is commit `d68b5b60f298453267d6b680914044a8eeeb1f62`.
 
-That scenario uses the AROS GPUI backend with **CPU rendering (tiny-skia)**.
-It does not qualify GPU acceleration, application behavior on a physical M1,
-or the editor's complete feature set. Treat this as a development port rather
-than a fully qualified Zed release.
+The same application binary has also passed a focused scenario on a physical
+M1 running native AROS: open a file, edit and save it, read back the exact bytes,
+find text, and close the window with exit status 0. The startup software-rendering
+warning was dismissed with **Skip**; the test project stayed in restricted mode.
+
+Both scenarios use the AROS GPUI backend with **CPU rendering (tiny-skia)**.
+They do not qualify GPU acceleration or the editor's complete feature set.
+Treat this as a development port rather than a fully qualified Zed release.
 
 ## Building for AROS
 
