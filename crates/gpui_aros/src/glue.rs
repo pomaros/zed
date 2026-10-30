@@ -36,6 +36,7 @@ pub(crate) const GPA_EVENT_RAWKEY: c_int = 7;
 pub(crate) const GPA_EVENT_MENUPICK: c_int = 8;
 /// code = 1 when Intuition activated the window, 0 when it deactivated it.
 pub(crate) const GPA_EVENT_ACTIVATE: c_int = 9;
+pub(crate) const GPA_EVENT_MOVED: c_int = 10;
 
 /// Mouse-button codes carried in `GpaEvent::code` for mousedown/up.
 pub(crate) const GPA_BUTTON_LEFT: c_int = 0;

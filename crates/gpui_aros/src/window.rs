@@ -228,6 +228,15 @@ impl ArosWindowInner {
         match event.kind {
             glue::GPA_EVENT_CLOSE => self.handle_close(),
             glue::GPA_EVENT_NEWSIZE => self.handle_resize(),
+            glue::GPA_EVENT_MOVED => {
+                self.state.borrow_mut().bounds.origin = Point { x: px(event.x as f32), y: px(event.y as f32) };
+                let callback = self.callbacks.borrow_mut().moved.take();
+                if let Some(mut callback) = callback {
+                    callback();
+                    self.callbacks.borrow_mut().moved = Some(callback);
+                }
+                self.request_frame();
+            }
             glue::GPA_EVENT_ACTIVATE => self.handle_activate(event.code != 0),
             glue::GPA_EVENT_REFRESH => {
                 // Externally damaged (exposed) — the diff won't see it, so

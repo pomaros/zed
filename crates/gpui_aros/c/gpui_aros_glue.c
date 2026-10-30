@@ -74,6 +74,7 @@ enum {
     GPA_EVENT_MOUSEUP = 6,
     GPA_EVENT_RAWKEY = 7,
     GPA_EVENT_MENUPICK = 8, /* code = the item id passed to gpa_set_menus */
+    GPA_EVENT_MOVED = 10,
     GPA_EVENT_ACTIVATE = 9, /* code = 1 window activated, 0 deactivated */
 };
 
@@ -311,7 +312,7 @@ void *gpa_open_window(int x, int y, int inner_w, int inner_h,
         WA_MinHeight, 200,
         WA_MaxWidth, 0xFFFF,
         WA_MaxHeight, 0xFFFF,
-        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_NEWSIZE | IDCMP_REFRESHWINDOW
+        WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_NEWSIZE | IDCMP_REFRESHWINDOW | IDCMP_CHANGEWINDOW
             | IDCMP_MOUSEBUTTONS | IDCMP_MOUSEMOVE | IDCMP_RAWKEY
             | IDCMP_MENUPICK | IDCMP_ACTIVEWINDOW | IDCMP_INACTIVEWINDOW,
         WA_ReportMouse, TRUE,
@@ -413,6 +414,11 @@ int gpa_poll_event(void *handle, GpaEvent *out)
         switch (im->Class) {
         case IDCMP_CLOSEWINDOW:
             kind = GPA_EVENT_CLOSE;
+            break;
+        case IDCMP_CHANGEWINDOW:
+            kind = GPA_EVENT_MOVED;
+            mx = w->win->LeftEdge;
+            my = w->win->TopEdge;
             break;
         case IDCMP_NEWSIZE:
             kind = GPA_EVENT_NEWSIZE;
