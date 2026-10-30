@@ -44,7 +44,7 @@ font-kit = { workspace = true, optional = true }
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 wgpu = { workspace = true, features = ["std", "metal", "gles", "vulkan", "wgsl", "webgpu"] }
 
-[target.'cfg(not(any(target_os = "linux", target_os = "freebsd")))'.dependencies]
+[target.'cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "aros")))'.dependencies]
 wgpu = { workspace = true, default-features = true }
 
 [target.'cfg(target_family = "wasm")'.dependencies]
@@ -61,3 +61,6 @@ naga = { git = "https://github.com/gfx-rs/wgpu", rev = "3b3506ea31154edc04de64de
 [[bench]]
 name = "layout_line"
 harness = false
+
+[target.'cfg(target_os = "aros")'.dependencies]
+wgpu = { workspace = true, features = ["std", "gles", "wgsl"] }

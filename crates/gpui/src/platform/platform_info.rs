@@ -28,6 +28,8 @@ pub enum OperatingSystem {
     Ios,
     /// Android.
     Android,
+    /// AROS, using its native Intuition platform.
+    Aros,
     /// The backend could not identify the host operating system.
     Unknown,
 }

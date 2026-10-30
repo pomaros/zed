@@ -38,6 +38,7 @@ impl KeyContext {
                 crate::OperatingSystem::Windows => "windows",
                 crate::OperatingSystem::Ios => "ios",
                 crate::OperatingSystem::Android => "android",
+                crate::OperatingSystem::Aros => "aros",
                 crate::OperatingSystem::Unknown => "unknown",
             },
         );

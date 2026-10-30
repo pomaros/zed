@@ -59,3 +59,16 @@ These parts of Zed are left out or report themselves unavailable:
 - extensions and wasm grammars (no wasm runtime), the agent, collaboration and
   calls;
 - native file change notifications: the file watcher polls.
+
+## Native GPU build
+
+The AROS GPU integration uses native Intuition handles and the GLES backend
+through egl.library. A hardware build selects `--features gpui_aros/native-gpu`
+and provides `AROS_EGL_LIB_DIR` if the managed Rust SDK's C library directory
+has no native libEGL.a entry stubs. The AROS-only patch inventory pins both
+public PomAROS graphics forks. Other platforms keep their own dependencies.
+
+The feature refuses software adapters instead of claiming hardware rendering.
+The software build remains available for VM work. Native GPUI scene verification
+and the full editor scenario are distinct; enabling the feature is not evidence
+that the editor workflow has passed.

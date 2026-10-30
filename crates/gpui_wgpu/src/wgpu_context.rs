@@ -541,6 +541,8 @@ impl WgpuContext {
             );
         }
 
+        // Retain causes for the caller even when no logger is installed.
+        let mut failures = Vec::new();
         // Test each adapter by creating a device and configuring the surface
         for adapter in adapters {
             let info = adapter.get_info();
@@ -572,6 +574,7 @@ impl WgpuContext {
                     ));
                 }
                 Err(e) => {
+                    failures.push(format!("{} ({:?}): {e:#}", info.name, info.backend));
                     log::info!(
                         "  Adapter {} ({:?}) failed: {}, trying next...",
                         info.name,
@@ -582,7 +585,10 @@ impl WgpuContext {
             }
         }
 
-        anyhow::bail!("No GPU adapter found that can configure the display surface")
+        anyhow::bail!(
+            "No GPU adapter found that can configure the display surface: {}",
+            failures.join("; ")
+        )
     }
 
     /// Sort adapters into a single priority order. Tiers (from highest to lowest):

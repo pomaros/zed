@@ -14,6 +14,7 @@ Cargo.lock is left to the other platforms) and runs the SDK's cargo.
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -96,10 +97,15 @@ def main():
 
     def entries(patches):
         for name, item in patches.items():
-            source = store / item["path"]
-            if not (source / "Cargo.toml").is_file():
-                raise RuntimeError("missing native crate: " + str(source))
-            fields = "path = " + json.dumps(str(source))
+            if "git" in item:
+                if set(item) - {"git", "rev", "package"} or not re.fullmatch(r"[0-9a-f]{40}", item.get("rev", "")):
+                    raise RuntimeError("native git patch requires an exact revision: " + name)
+                fields = "git = " + json.dumps(item["git"]) + ", rev = " + json.dumps(item["rev"])
+            else:
+                source = store / item["path"]
+                if not (source / "Cargo.toml").is_file():
+                    raise RuntimeError("missing native crate: " + str(source))
+                fields = "path = " + json.dumps(str(source))
             if "package" in item:
                 fields += ", package = " + json.dumps(item["package"])
             lines.append(name + " = { " + fields + " }")

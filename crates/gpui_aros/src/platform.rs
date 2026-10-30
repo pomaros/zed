@@ -147,11 +147,10 @@ impl ArosPlatform {
 }
 
 impl Platform for ArosPlatform {
-    /// AROS follows the Linux input conventions (Ctrl-based shortcuts, the
-    /// Linux keymaps), which is what `os` describes.
+    /// Native AROS identity. Keyboard binding families do not change the OS.
     fn platform_info(&self) -> PlatformInfo {
         PlatformInfo {
-            os: OperatingSystem::Linux,
+            os: OperatingSystem::Aros,
             target: PlatformTarget::Native,
         }
     }

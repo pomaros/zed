@@ -41,6 +41,8 @@ mod platform;
 mod text;
 #[cfg(target_os = "aros")]
 mod window;
+#[cfg(target_os = "aros")]
+mod window_renderer;
 
 #[cfg(target_os = "aros")]
 pub use platform::ArosPlatform;

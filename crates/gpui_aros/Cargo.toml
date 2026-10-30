@@ -12,6 +12,9 @@ license = "Apache-2.0"
 [lints]
 workspace = true
 
+[features]
+native-gpu = []
+
 [lib]
 path = "src/gpui_aros.rs"
 
@@ -38,3 +41,7 @@ raw-window-handle = "0.6"
 
 [build-dependencies]
 cc = "1"
+
+[[example]]
+name = "native_gpu"
+required-features = ["native-gpu"]

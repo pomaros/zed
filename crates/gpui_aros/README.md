@@ -112,3 +112,20 @@ minimal consumer: one window, every renderer primitive, keyboard echo.
   are reported as errors.
 - The dispatcher's worker count and priorities were tuned on a hosted,
   single-CPU AROS; native SMP qualification is open.
+
+## Native GPU integration
+
+The `native-gpu` feature routes complete scenes to GPUI's WGPU renderer and
+uses the native Intuition/EGL provider. The consumer must select the AROS WGPU
+and raw-window-handle forks. GPU initialization errors and software adapters
+are reported rather than silently selecting the CPU renderer. With the feature
+disabled, the existing tiny-skia renderer serves software rendering and its
+portable conformance suite.
+
+The feature links the native `libEGL.a` entry stubs from the selected C SDK.
+`AROS_EGL_LIB_DIR` can select a separately versioned graphics stub directory
+without modifying the managed Rust SDK.
+
+The window owner destroys the renderer/surface before calling CloseWindow.
+The hardware path requires native scene, resize and close qualification before
+being selected by default in application builds.

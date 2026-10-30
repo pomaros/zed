@@ -16,13 +16,14 @@ use gpui::{
     WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowParams, WindowVisibility, px,
 };
 use raw_window_handle::{
-    DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, WindowHandle,
+    ArosDisplayHandle, ArosWindowHandle, DisplayHandle, HandleError, HasDisplayHandle,
+    HasWindowHandle, WindowHandle,
 };
 
 use crate::glue::{self, GpaEvent, GpaMenuSpec};
 use crate::input::{self, key_name, latin1_to_string, modifiers_from_qualifier};
 use crate::menus::MenuState;
-use crate::renderer::CpuRenderer;
+use crate::window_renderer::WindowRenderer;
 
 #[derive(Default)]
 struct ArosWindowCallbacks {
@@ -41,7 +42,7 @@ struct ArosWindowCallbacks {
 
 struct ArosWindowState {
     handle: *mut c_void,
-    renderer: CpuRenderer,
+    renderer: Option<WindowRenderer>,
     bounds: Bounds<Pixels>,
     title: String,
     input_handler: Option<PlatformInputHandler>,
@@ -85,7 +86,10 @@ pub(crate) struct ArosWindowInner {
 
 impl Drop for ArosWindowInner {
     fn drop(&mut self) {
-        let handle = self.state.borrow().handle;
+        // Destroy the GPU surface before closing its Intuition window.
+        let state = self.state.get_mut();
+        drop(state.renderer.take());
+        let handle = state.handle;
         if !handle.is_null() {
             // SAFETY: handle came from gpa_open_window and is closed once.
             unsafe { glue::gpa_close_window(handle) };
@@ -130,12 +134,18 @@ impl ArosWindow {
         // The drawable is the window interior, one device pixel per point:
         // the CPU renderer blits straight into the RastPort.
         let device_size = device_size(width, height);
-        let renderer = CpuRenderer::new(device_size);
+        let renderer = match WindowRenderer::new(raw, device_size) {
+            Ok(renderer) => renderer,
+            Err(error) => {
+                unsafe { glue::gpa_close_window(raw) };
+                return Err(error);
+            }
+        };
         let atlas: Arc<dyn PlatformAtlas> = renderer.sprite_atlas();
 
         let state = ArosWindowState {
             handle: raw,
-            renderer,
+            renderer: Some(renderer),
             bounds,
             title,
             input_handler: None,
@@ -222,7 +232,7 @@ impl ArosWindowInner {
             glue::GPA_EVENT_REFRESH => {
                 // Externally damaged (exposed) — the diff won't see it, so
                 // force a full repaint + re-blit.
-                self.state.borrow_mut().renderer.invalidate();
+                self.state.borrow_mut().renderer.as_mut().unwrap().invalidate();
                 self.request_frame()
             }
             glue::GPA_EVENT_MOUSEMOVE => {
@@ -584,7 +594,7 @@ impl ArosWindowInner {
         {
             let mut state = self.state.borrow_mut();
             state.bounds.size = size;
-            state.renderer.update_drawable_size(device_size(w, h));
+            state.renderer.as_mut().unwrap().update_drawable_size(device_size(w, h));
         }
         let taken = self.callbacks.borrow_mut().resize.take();
         if let Some(mut f) = taken {
@@ -656,13 +666,22 @@ fn map_button(code: c_int) -> MouseButton {
 
 impl HasWindowHandle for ArosWindow {
     fn window_handle(&self) -> Result<WindowHandle<'_>, HandleError> {
-        Err(HandleError::Unavailable)
+        let state = self.inner.state.borrow();
+        if state.closed {
+            return Err(HandleError::Unavailable);
+        }
+        // SAFETY: the wrapper owns this Intuition window until ArosWindowInner
+        // drops. The returned borrow cannot outlive this ArosWindow reference.
+        let native = unsafe { glue::gpa_native_window(state.handle) };
+        let pointer = std::ptr::NonNull::new(native).ok_or(HandleError::Unavailable)?;
+        Ok(unsafe { WindowHandle::borrow_raw(ArosWindowHandle::new(pointer).into()) })
     }
 }
 
 impl HasDisplayHandle for ArosWindow {
     fn display_handle(&self) -> Result<DisplayHandle<'_>, HandleError> {
-        Err(HandleError::Unavailable)
+        // SAFETY: the default Intuition display handle borrows no resource.
+        Ok(unsafe { DisplayHandle::borrow_raw(ArosDisplayHandle::new().into()) })
     }
 }
 
@@ -843,35 +862,8 @@ impl PlatformWindow for ArosWindow {
         if state.closed {
             return;
         }
-        // Dirty-rect repaint: the renderer diffs the scene against the
-        // previous frame and rasterizes only the damaged region; None means
-        // an identical frame — no raster, no blit.
-        let raster_started = Instant::now();
-        let Some(damage) = state.renderer.draw(scene) else {
-            crate::stats::skipped();
-            return;
-        };
-        let raster = raster_started.elapsed();
-        let dev_w = state.renderer.width() as i32;
-        let stride = dev_w * 4;
         let handle = state.handle;
-        let data = state.renderer.framebuffer();
-
-        let blit_started = Instant::now();
-        // SAFETY: valid handle; data is the full framebuffer, and the glue
-        // blits the (x, y, w, h) subrect out of it (same stride).
-        unsafe {
-            glue::gpa_blit(
-                handle,
-                data.as_ptr() as *const c_void,
-                stride,
-                damage.x0,
-                damage.y0,
-                damage.x1 - damage.x0,
-                damage.y1 - damage.y0,
-            );
-        }
-        crate::stats::painted(raster, blit_started.elapsed(), damage);
+        state.renderer.as_mut().unwrap().draw(handle, scene);
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
@@ -883,12 +875,7 @@ impl PlatformWindow for ArosWindow {
     }
 
     fn gpu_specs(&self) -> Option<GpuSpecs> {
-        Some(GpuSpecs {
-            is_software_emulated: true,
-            device_name: "AROS CPU".to_owned(),
-            driver_name: "tiny-skia".to_owned(),
-            driver_info: String::new(),
-        })
+        self.inner.state.borrow().renderer.as_ref().and_then(WindowRenderer::gpu_specs)
     }
 
     fn update_ime_position(&self, _bounds: Bounds<Pixels>) {}

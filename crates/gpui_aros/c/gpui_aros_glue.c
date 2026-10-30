@@ -347,6 +347,13 @@ static void gpa_free_menus(GpaWindow *w)
     w->pick_head = w->pick_tail = 0;
 }
 
+/* Borrow the native window; the GpaWindow remains its sole owner. */
+void *gpa_native_window(void *handle)
+{
+    GpaWindow *w = handle;
+    return w ? w->win : NULL;
+}
+
 void gpa_close_window(void *handle)
 {
     GpaWindow *w = handle;

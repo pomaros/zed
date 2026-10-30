@@ -52,6 +52,7 @@ unsafe extern "C" {
     ) -> *mut c_void;
 
     pub(crate) fn gpa_close_window(handle: *mut c_void);
+    pub(crate) fn gpa_native_window(handle: *mut c_void) -> *mut c_void;
 
     pub(crate) fn gpa_blit(
         handle: *mut c_void,

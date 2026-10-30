@@ -738,6 +738,7 @@ fn display_modifiers(
             OperatingSystem::Mac => "⌘",
             OperatingSystem::Windows => "⊞",
             OperatingSystem::Linux | OperatingSystem::FreeBsd => "❖",
+            OperatingSystem::Aros => "Amiga-",
             OperatingSystem::Ios | OperatingSystem::Android | OperatingSystem::Unknown => "cmd-",
         })?;
     }
@@ -790,7 +791,8 @@ fn unparse(modifiers: &Modifiers, key: &str, os: OperatingSystem) -> String {
     if modifiers.platform {
         result.push_str(match os {
             OperatingSystem::Windows => "win-",
-            OperatingSystem::Linux
+            OperatingSystem::Aros
+            | OperatingSystem::Linux
             | OperatingSystem::FreeBsd
             | OperatingSystem::Android
             | OperatingSystem::Unknown => "super-",

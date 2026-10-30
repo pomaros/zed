@@ -51,6 +51,19 @@ fn main() {
         return;
     }
 
+    if env::var_os("CARGO_FEATURE_NATIVE_GPU").is_some() {
+        // EGL entry stubs call the native egl.library. A separate directory
+        // permits an independently versioned graphics SDK without mutating the
+        // managed Rust SDK or changing its CRT/platform adapter provenance.
+        println!("cargo:rerun-if-env-changed=AROS_EGL_LIB_DIR");
+        let egl_lib = env::var("AROS_EGL_LIB_DIR")
+            .unwrap_or_else(|_| format!("{sdk}/lib"));
+        assert!(Path::new(&egl_lib).join("libEGL.a").is_file(),
+            "native-gpu requires libEGL.a; select its SDK with AROS_EGL_LIB_DIR");
+        println!("cargo:rustc-link-search=native={egl_lib}");
+        println!("cargo:rustc-link-lib=static=EGL");
+    }
+
     // -Wno-pointer-sign matches the AROS C convention (STRPTR is unsigned
     // char*; literals are plain char*). AROS commands are relocatable
     // objects: no PIC.
