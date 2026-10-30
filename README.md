@@ -23,6 +23,22 @@ Both scenarios use the AROS GPUI backend with **CPU rendering (tiny-skia)**.
 They do not qualify GPU acceleration or the editor's complete feature set.
 Treat this as a development port rather than a fully qualified Zed release.
 
+## Experimental native GPU rendering
+
+The optional `aros-native-gpu` build renders through WGPU/GLES, native Intuition
+window handles and `egl.library`. A physical M1 capture confirms the editor's
+GPU layer; window close returns status 0. Window resizing is visually observed.
+This is separate from the CPU functional scenario above.
+
+GPU desktop integration is incomplete: the content can lag behind a dragged
+window, and the software pointer is obscured by the GPU layer. Movement
+notifications are integrated; their native verification and pointer composition
+remain open. Keep the CPU build for VM work and as a fallback reference.
+
+Build with `--features aros-native-gpu` and set `AROS_EGL_LIB_DIR` to the graphics
+SDK directory containing `libEGL.a`. The build isolates this entry archive from
+the managed C runtime. See [the native GPU build notes](packaging/aros/README.md#native-gpu-build).
+
 ## Building for AROS
 
 Use the managed native/VM Rust SDK and its matching AROS C SDK from
