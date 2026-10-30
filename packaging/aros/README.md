@@ -63,7 +63,7 @@ These parts of Zed are left out or report themselves unavailable:
 ## Native GPU build
 
 The AROS GPU integration uses native Intuition handles and the GLES backend
-through egl.library. A hardware build selects `--features gpui_aros/native-gpu`
+through egl.library. A hardware build selects `--features aros-native-gpu`
 and provides `AROS_EGL_LIB_DIR` if the managed Rust SDK's C library directory
 has no native libEGL.a entry stubs. The AROS-only patch inventory pins both
 public PomAROS graphics forks. Other platforms keep their own dependencies.
