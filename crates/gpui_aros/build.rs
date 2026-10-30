@@ -60,7 +60,14 @@ fn main() {
             .unwrap_or_else(|_| format!("{sdk}/lib"));
         assert!(Path::new(&egl_lib).join("libEGL.a").is_file(),
             "native-gpu requires libEGL.a; select its SDK with AROS_EGL_LIB_DIR");
-        println!("cargo:rustc-link-search=native={egl_lib}");
+        // Expose only the graphics entry archive to dependents, not another
+        // SDK's full library directory (which could alter CRT resolution).
+        let selected = Path::new(&egl_lib).join("libEGL.a");
+        println!("cargo:rerun-if-changed={}", selected.display());
+        let isolated = Path::new(&env::var("OUT_DIR").unwrap()).join("native-egl");
+        std::fs::create_dir_all(&isolated).expect("create EGL stub directory");
+        std::fs::copy(selected, isolated.join("libEGL.a")).expect("copy EGL entry stubs");
+        println!("cargo:rustc-link-search=native={}", isolated.display());
         println!("cargo:rustc-link-lib=static=EGL");
     }
 
