@@ -10,7 +10,8 @@ gpui-pre snapshots. The revision is recorded in crates/gpui_aros/UPSTREAM.
 
 Before copying, the script refuses to overwrite local edits: every synced file
 must still match the recorded revision. Fix the backend in gpui-aros, then
-sync. --check only verifies that the tree matches the recorded revision.
+sync. Updates select the zed-main branch explicitly, regardless of the source
+checkout’s active branch. --check verifies the recorded revision.
 """
 import subprocess
 import sys
@@ -58,7 +59,7 @@ def main():
     if "--check" in sys.argv:
         print("crates/gpui_aros matches", record.read_text().strip())
         return
-    rev = git(checkout, "rev-parse", "HEAD").decode().strip()
+    rev = git(checkout, "rev-parse", "refs/heads/zed-main^{commit}").decode().strip()
     files = tracked(checkout, rev)
     for local in sorted(DEST.rglob("*"), reverse=True):
         rel = local.relative_to(DEST).as_posix()
