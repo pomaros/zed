@@ -1,7 +1,52 @@
 > [!IMPORTANT]
 > Remove this line to confirm you've reviewed this PR before submitting.
 
-# Zed
+# Zed for AROS (AArch64)
+
+This is the PomAROS development port of [Zed](https://zed.dev) to native
+AArch64 AROS. The active repository is [pomaros/zed](https://github.com/pomaros/zed)
+and its default development branch is **`aros`**.
+
+## Verified behavior
+
+The consolidated build has passed a functional scenario in the PomAROS VM:
+open a file, select and edit its contents, save, read back the actual bytes from
+the guest filesystem, capture the editor window, and shut down the VM cleanly.
+The verified application code is commit `d68b5b60f298453267d6b680914044a8eeeb1f62`.
+
+That scenario uses the AROS GPUI backend with **CPU rendering (tiny-skia)**.
+It does not qualify GPU acceleration, application behavior on a physical M1,
+or the editor's complete feature set. Treat this as a development port rather
+than a fully qualified Zed release.
+
+## Building for AROS
+
+Use the managed native/VM Rust SDK and its matching AROS C SDK from
+[pomaros/rust-aros](https://github.com/pomaros/rust-aros), plus the prepared
+native crate store. The qualified cohort uses the unmodified official
+`nightly-2026-08-04` compiler and SDK generation
+`b4ec3990690f25e8809c03a6d7063ea36b84699e90e2f036b88f85718f8cfed2`.
+The AROS standard library and platform adapters are patched; the compiler is not.
+The Hosted/macOS Rust SDK has a different ABI and must not be substituted.
+
+```sh
+git clone --branch aros https://github.com/pomaros/zed.git
+cd zed
+export AROS_RUST_SDK=/absolute/path/to/managed-aros-rust-sdk
+export AROS_CRATE_STORE=/absolute/path/to/native-crate-store
+export CARGO_TARGET_DIR=/absolute/path/to/zed-build
+python3 script/aros-cargo.py build --locked --offline --profile release-fast -p zed --bin zed
+```
+
+[script/aros-cargo.py](script/aros-cargo.py) verifies the SDK inputs, selects its
+precompiled standard library and applies the AROS crate configuration. It uses
+[packaging/aros/Cargo.lock](packaging/aros/Cargo.lock); keep the root lockfile
+for the other platforms. Prepare the SDK and crate store before the offline
+build. The executable is written under
+`$CARGO_TARGET_DIR/aarch64-unknown-aros/release-fast/zed`; retain its unstripped
+copy and matching source/SDK identities when preparing a smaller runtime.
+
+## Upstream Zed
 
 [![Zed](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/zed-industries/zed/main/assets/badge/v0.json)](https://zed.dev)
 [![CI](https://github.com/zed-industries/zed/actions/workflows/run_tests.yml/badge.svg)](https://github.com/zed-industries/zed/actions/workflows/run_tests.yml)
