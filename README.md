@@ -30,10 +30,13 @@ window handles and `egl.library`. A physical M1 capture confirms the editor's
 GPU layer; window close returns status 0. Window resizing is visually observed.
 This is separate from the CPU functional scenario above.
 
-GPU desktop integration is incomplete: the content can lag behind a dragged
-window, and the software pointer is obscured by the GPU layer. Movement
-notifications are integrated; their native verification and pointer composition
-remain open. Keep the CPU build for VM work and as a fallback reference.
+The native presentation driver must respect Intuition's logical window canvases
+and software cursor. With that driver, a focused M1 check verifies GPU-rendered
+content in the desktop bitmap, the visible pointer, a completed window move and
+normal close. Application rendering uses the GPU; presentation into the native
+window bitmap uses a CPU copy. Accelerated desktop composition is separate work.
+Movement throughout a drag is not qualified by the retained still captures.
+Keep the CPU build for VM work and as a fallback reference.
 
 Build with `--features aros-native-gpu` and set `AROS_EGL_LIB_DIR` to the graphics
 SDK directory containing `libEGL.a`. The build isolates this entry archive from
