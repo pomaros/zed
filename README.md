@@ -35,7 +35,8 @@ and software cursor. With that driver, a focused M1 check verifies GPU-rendered
 content in the desktop bitmap, the visible pointer, a completed window move and
 normal close. Application rendering uses the GPU; presentation into the native
 window bitmap uses a CPU copy. Accelerated desktop composition is separate work.
-Movement throughout a drag is not qualified by the retained still captures.
+The checked system profile uses outline dragging: content moves on release.
+Opaque live dragging is outside this qualification.
 Keep the CPU build for VM work and as a fallback reference.
 
 Build with `--features aros-native-gpu` and set `AROS_EGL_LIB_DIR` to the graphics
