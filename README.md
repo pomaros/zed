@@ -1,6 +1,3 @@
-> [!IMPORTANT]
-> Remove this line to confirm you've reviewed this PR before submitting.
-
 # Zed for AROS (AArch64)
 
 This is the PomAROS development port of [Zed](https://zed.dev) to native
